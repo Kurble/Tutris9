@@ -1,0 +1,10 @@
+[package]
+name = "model"
+version = "0.1.0"
+authors = ["Bram Buurlage <brambuurlage@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+serde = "1"
+serde_json = "1"
+mirror = { path = "../../mirror" }
