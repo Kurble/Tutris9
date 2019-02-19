@@ -1,7 +1,12 @@
 extern crate quicksilver;
 extern crate mirror;
+extern crate tetris_model;
 extern crate serde;
 extern crate serde_json;
+
+mod client;
+mod game;
+mod matchmaking;
 
 use quicksilver::{
     Result,
@@ -23,7 +28,11 @@ struct DrawScene {
 impl State for DrawScene {
     fn new() -> Result<Self> {
         Ok(DrawScene {
-            current: unimplemented!(),
+            current: Box::new(
+                matchmaking::Matchmaking::new(
+                    client::Client::new("127.0.0.1:1337").unwrap()
+                )
+            )
         })
     }
 

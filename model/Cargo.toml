@@ -1,5 +1,5 @@
 [package]
-name = "model"
+name = "tetris_model"
 version = "0.1.0"
 authors = ["Bram Buurlage <brambuurlage@gmail.com>"]
 edition = "2018"
@@ -8,3 +8,5 @@ edition = "2018"
 serde = "1"
 serde_json = "1"
 mirror = { path = "../../mirror" }
+byteorder = "1"
+rand = "0.6"

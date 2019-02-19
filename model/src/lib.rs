@@ -1,13 +1,14 @@
 extern crate serde;
 extern crate serde_json;
 extern crate mirror;
+extern crate byteorder;
+extern crate rand;
 
-pub mod client;
+pub mod connection;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub mod shapes;
+
+pub mod instance;
+pub mod matchmaking;
+
+
