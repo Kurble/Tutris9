@@ -152,4 +152,4 @@ const Z: [[u8; 16]; 4] = [[
     7,0,0,0,
 ]];
 
-const SHAPES: [[[u8; 16]; 4]; 7]  = [I, O, T, J, L, S, Z];
+pub const SHAPES: [[[u8; 16]; 4]; 7]  = [I, O, T, J, L, S, Z];

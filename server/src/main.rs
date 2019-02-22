@@ -11,6 +11,7 @@ use std::time::{Instant, Duration};
 use std::process::Command;
 use clap::{App, Arg};
 use std::iter::repeat;
+use std::mem::replace;
 
 struct Match {
     users: Vec<String>,
@@ -114,20 +115,19 @@ fn run_matchmaking_server() -> ::std::io::Result<()> {
 fn run_instance_server(address: String, users: Vec<String>) -> std::io::Result<()> {
     println!("instance started on {}", address);
 
-    let instance = tetris_model::instance::InstanceState {
-        context: mirror::Hidden::new(tetris_model::instance::ServerPrivate {
-            timer: 0,
-            awaiting: users.clone(),
-            players: users.clone(),
-        }),
-        games: users.iter().enumerate().map(|(i, user)| tetris_model::instance::PlayerState::new()).collect(),
-        done: false,
-        started: false,
-    };
+    let instance = tetris_model::instance::InstanceState::new(users);
 
     let mut server = instance_server::InstanceServer::new(instance, address.as_str()).unwrap();
     loop {
         server.update();
+        server.server_update();
+
+        let commands = replace(&mut server.context.as_mut().unwrap().broadcast_commands,
+                               Vec::new());
+
+        for command in commands {
+            server.command(command.as_str());
+        }
 
         if server.done {
             break;

@@ -6,9 +6,8 @@ use tetris_model::matchmaking::MatchmakingState;
 use quicksilver::{
     Result,
     Future,
-    geom::{Circle, Line, Rectangle, Transform, Triangle, Vector},
     graphics::{Background::Img, Color, Font, FontStyle},
-    lifecycle::{Settings, State, Window, run},
+    lifecycle::Window,
 };
 
 pub struct Matchmaking {
@@ -29,13 +28,12 @@ impl Matchmaking {
 }
 
 impl Scene for Matchmaking {
-    fn update(&mut self, window: &mut Window) -> Result<()> {
+    fn update(&mut self, _: &mut Window) -> Result<()> {
         self.client.update();
-
         Ok(())
     }
 
-    fn event(&mut self, event: &Event, window: &mut Window) -> Result<()> {
+    fn event(&mut self, _event: &Event, _: &mut Window) -> Result<()> {
         Ok(())
     }
 

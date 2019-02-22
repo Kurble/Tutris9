@@ -1,8 +1,6 @@
 use std::ops::Deref;
 use std::net::*;
-use std::io::Write;
 use std::str::FromStr;
-use serde::*;
 use mirror::*;
 use serde_json::{Value, from_value};
 use tetris_model::connection::Connection;
@@ -24,7 +22,6 @@ impl<T: for<'a> Reflect<'a>> Client<T> {
     pub fn new(server: &str) -> ::std::io::Result<Self> {
         let mut connection = Connection::new(TcpStream::connect(server)?)?;
 
-        let mut value_received = false;
         loop {
             if let Some(message) = connection.messages().next() {
                 let value: Value = Value::from_str(message.as_str()).unwrap();

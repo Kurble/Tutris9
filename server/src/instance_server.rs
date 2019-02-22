@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::net::*;
 use std::io::{Read, Write};
 use std::iter::repeat;
@@ -20,9 +20,17 @@ impl<T: for<'a> Reflect<'a> + Serialize> Deref for InstanceServer<T> {
     }
 }
 
+impl<T: for<'a> Reflect<'a> + Serialize> DerefMut for InstanceServer<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.value
+    }
+}
+
 impl<T: for<'a> Reflect<'a> + Serialize> InstanceServer<T> {
     pub fn new(value: T, server: &str) -> ::std::io::Result<Self> {
         let mut listener = TcpListener::bind(server)?;
+
+        listener.set_nonblocking(true)?;
 
         Ok(Self {
             value,
@@ -58,8 +66,11 @@ impl<T: for<'a> Reflect<'a> + Serialize> InstanceServer<T> {
         self.connections.retain(|connection| connection.alive());
     }
 
-    pub fn command(&self, cmd: &str) {
-        // todo
+    pub fn command(&mut self, cmd: &str) {
+        self.value.command_str(cmd).expect("unable to execute broadcast command");
+        for connection in self.connections.iter_mut() {
+            connection.send(cmd);
+        }
     }
 }
 

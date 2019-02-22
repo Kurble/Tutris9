@@ -76,7 +76,7 @@ impl<T: for<'a> Reflect<'a> + Serialize> UserServer<T> {
 impl<T: for<'a> Reflect<'a> + Serialize> User<T> {
     pub fn command(&mut self, command: &str) {
         self.value.command_str(command).unwrap();
-        self.connection.send(command).unwrap();
+        self.connection.send(command);
     }
 
     pub fn kick(&mut self) {

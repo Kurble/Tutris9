@@ -36,12 +36,18 @@ impl Connection {
         self.alive
     }
 
-    pub fn send(&mut self, message: &str) -> ::std::io::Result<()> {
+    fn send_inner(&mut self, message: &str) -> ::std::io::Result<()> {
         let len = message.as_bytes().len() as u16 + 2;
         self.stream.write_u16::<BigEndian>(len)?;
         self.stream.write_all(message.as_bytes())?;
         self.stream.flush()?;
         Ok(())
+    }
+
+    pub fn send(&mut self, message: &str) {
+        if self.send_inner(message).is_err() {
+            self.alive = false;
+        }
     }
 
     fn parse_message(&mut self) -> ::std::io::Result<Option<String>> {
