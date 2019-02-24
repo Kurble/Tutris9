@@ -27,6 +27,10 @@ pub struct InstanceState {
     pub speed: u64,
 }
 
+#[ReflectFn(
+    Fn(name="clear", args="1"),
+    Fn(name="compact", args="0"),
+)]
 #[derive(Serialize, Deserialize, Reflect)]
 pub struct PlayerState {
     pub field: Vec<u8>,
@@ -124,20 +128,45 @@ impl InstanceState {
         if let Some(id) = self.context.as_ref().unwrap().player_index(player.as_str()) {
             let context = self.context.as_mut().unwrap();
 
+            // place the tetrimino
             for y in 0..4 {
                 for x in 0..4 {
                     let shape = self.games[id].current as usize;
                     let rotation = state.rotation as usize;
                     let col = super::shapes::SHAPES[shape][rotation][x+y*4];
                     if col != 0 {
+                        let index = (state.y+y as i32)*10 + state.x+x as i32;
+
+                        self.games[id].field[index as usize] = col;
+
                         context.broadcast(format!("games/{}/field/{}/set:{}",
                                                   id,
-                                                  (state.y+y as i32)*10 + state.x+x as i32,
+                                                  index,
                                                   col));
                     }
                 }
             }
 
+            // check for cleared lines
+            let mut have_clear = false;
+            for y in 0..4 {
+                let y = state.y + y;
+                if y >= 0 && y < 20 {
+                    let line = (y * 10) as usize;
+                    let clear = self.games[id].field[line..line + 10]
+                        .iter()
+                        .fold(true, |clear, &b| clear && b > 0);
+                    if clear {
+                        context.broadcast(format!("games/{}/call:clear:{}", id, y));
+                        have_clear = true;
+                    }
+                }
+            }
+            if have_clear {
+                context.broadcast(format!("games/{}/call:compact:", id));
+            }
+
+            // move on to the next piece
             context.broadcast(format!("games/{}/current/set:{}",
                                       id,
                                       self.games[id].next[0]));
@@ -159,6 +188,38 @@ impl PlayerState {
             target: 0,
             seed: random(),
             moves: 0,
+        }
+    }
+
+    pub fn clear(&mut self, line: usize) {
+        for i in 0..10 {
+            self.field[line*10+i] = 0;
+        }
+    }
+
+    pub fn compact(&mut self) {
+        let mut y = 19;
+        while y > 0 {
+            let line = (y * 10) as usize;
+
+            for _ in 0..4 {
+                let contents = self.field[line..]
+                    .iter()
+                    .take(10)
+                    .find(|&&x| x > 0)
+                    .is_some();
+
+                if contents {
+                    break;
+                } else {
+                    for x in 0..10 {
+                        self.field[y*10 + x] = self.field[(y-1)*10 + x];
+                        self.field[(y-1)*10 + x] = 0;
+                    }
+                }
+            }
+
+            y -= 1;
         }
     }
 
