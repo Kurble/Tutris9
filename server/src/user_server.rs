@@ -1,7 +1,5 @@
 use std::ops::Deref;
 use std::net::*;
-use std::io::{Read, Write};
-use std::iter::repeat;
 use serde::*;
 use mirror::*;
 use tetris_model::connection::Connection;
@@ -26,7 +24,7 @@ impl<T: for<'a> Reflect<'a> + Serialize> Deref for User<T> {
 
 impl<T: for<'a> Reflect<'a> + Serialize> UserServer<T> {
     pub fn new<F: 'static + Fn()->T>(factory: F, server: &str) -> ::std::io::Result<Self> {
-        let mut listener = TcpListener::bind(server)?;
+        let listener = TcpListener::bind(server)?;
 
         listener.set_nonblocking(true)?;
 
@@ -38,7 +36,7 @@ impl<T: for<'a> Reflect<'a> + Serialize> UserServer<T> {
     }
 
     pub fn update(&mut self) {
-        if let Ok((mut stream, address)) = self.listener.accept() {
+        if let Ok((stream, address)) = self.listener.accept() {
             let value = (self.factory)();
             let mut connection = Connection::new(stream).unwrap();
 

@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::net::*;
 use std::str::FromStr;
 use mirror::*;
@@ -15,6 +15,12 @@ impl<T: for<'a> Reflect<'a>> Deref for Client<T> {
 
     fn deref(&self) -> &T {
         &self.value
+    }
+}
+
+impl<T: for<'a> Reflect<'a>> DerefMut for Client<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.value
     }
 }
 

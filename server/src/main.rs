@@ -10,7 +10,6 @@ mod user_server;
 use std::time::{Instant, Duration};
 use std::process::Command;
 use clap::{App, Arg};
-use std::iter::repeat;
 use std::mem::replace;
 
 struct Match {
@@ -52,7 +51,7 @@ fn run_matchmaking_server() -> ::std::io::Result<()> {
 
             // try to fill the current match
             for user in server.users() {
-                if user.matched == false && current_match.users.len() < 101 {
+                if user.matched == false && current_match.users.len() < 9 {
                     let key = format!("player_key_afcb8f7acaf7f6_{}", current_match.users.len());
 
                     user.command("matched/set:true");
@@ -81,10 +80,12 @@ fn run_matchmaking_server() -> ::std::io::Result<()> {
                         args.push(format!("--user={}", user));
                     }
 
-                    Command::new("tetris_server")
+                    Command::new(std::env::current_exe()?)
                         .args(args.iter())
                         .spawn()
-                        .expect("failed to start instance. server is broken.");
+                        .expect("Failed to start instance. Server is broken.");
+
+                    ::std::thread::sleep(Duration::from_millis(100));
 
                     let commands = [
                         format!("instance_address/set:\"{}\"", instance_address),
@@ -108,16 +109,14 @@ fn run_matchmaking_server() -> ::std::io::Result<()> {
             }
         }
     }
-
-    Ok(())
 }
 
 fn run_instance_server(address: String, users: Vec<String>) -> std::io::Result<()> {
-    println!("instance started on {}", address);
-
     let instance = tetris_model::instance::InstanceState::new(users);
 
     let mut server = instance_server::InstanceServer::new(instance, address.as_str()).unwrap();
+
+    println!("instance started on {}", address);
     loop {
         server.update();
         server.server_update();
@@ -129,17 +128,17 @@ fn run_instance_server(address: String, users: Vec<String>) -> std::io::Result<(
             server.command(command.as_str());
         }
 
-        if server.done {
+        if server.done || (server.started && server.connections() == 0) {
             break;
         }
     }
-
     println!("instance terminating on {}", address);
+
     Ok(())
 }
 
 fn main() {
-    let matches = App::new("Tetris 99 clone server")
+    let app = App::new("Tetris 99 clone server")
         .version("1.0")
         .author("Bram Buurlage. <brambuurlage@gmail.com>")
         .arg(Arg::with_name("instance")
@@ -155,8 +154,9 @@ fn main() {
             .takes_value(true)
             .number_of_values(1)
             .requires("instance")
-            .help("Adds a user the instance should expect"))
-        .get_matches();
+            .help("Adds a user the instance should expect"));
+
+    let matches = app.get_matches();
 
     if matches.is_present("instance") {
         run_instance_server(matches.value_of("instance").unwrap().into(),

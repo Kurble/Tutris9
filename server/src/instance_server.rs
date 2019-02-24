@@ -1,7 +1,5 @@
 use std::ops::{Deref, DerefMut};
 use std::net::*;
-use std::io::{Read, Write};
-use std::iter::repeat;
 use serde::*;
 use mirror::*;
 use tetris_model::connection::Connection;
@@ -28,7 +26,7 @@ impl<T: for<'a> Reflect<'a> + Serialize> DerefMut for InstanceServer<T> {
 
 impl<T: for<'a> Reflect<'a> + Serialize> InstanceServer<T> {
     pub fn new(value: T, server: &str) -> ::std::io::Result<Self> {
-        let mut listener = TcpListener::bind(server)?;
+        let listener = TcpListener::bind(server)?;
 
         listener.set_nonblocking(true)?;
 
@@ -40,7 +38,7 @@ impl<T: for<'a> Reflect<'a> + Serialize> InstanceServer<T> {
     }
 
     pub fn update(&mut self) {
-        if let Ok((mut stream, _)) = self.listener.accept() {
+        if let Ok((stream, _)) = self.listener.accept() {
             let mut connection = Connection::new(stream).unwrap();
 
             connection.send(serde_json::to_string_pretty(&self.value).unwrap().as_str());
@@ -67,10 +65,14 @@ impl<T: for<'a> Reflect<'a> + Serialize> InstanceServer<T> {
     }
 
     pub fn command(&mut self, cmd: &str) {
-        self.value.command_str(cmd).expect("unable to execute broadcast command");
+        self.value.command_str(cmd).expect(format!("unable to execute broadcast command: {}", cmd).as_str());
         for connection in self.connections.iter_mut() {
             connection.send(cmd);
         }
+    }
+
+    pub fn connections(&self) -> usize {
+        self.connections.len()
     }
 }
 

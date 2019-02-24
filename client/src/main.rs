@@ -56,5 +56,12 @@ impl State for DrawScene {
 }
 
 fn main() {
-    run::<DrawScene>("Tetris 99 clone", Vector::new(1280, 720), Settings::default());
+    run::<DrawScene>("Tetris 99 clone",
+                     Vector::new(640, 360),
+                     Settings {
+                         draw_rate: 16.6666667,
+                         update_rate: 16.6666667,
+                         vsync: true,
+                         ..Settings::default()
+                     });
 }

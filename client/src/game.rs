@@ -1,5 +1,5 @@
 use super::*;
-use client::Client;
+use super::client::Client;
 use tetris_model::instance::*;
 use std::time::{Instant, Duration};
 
@@ -7,7 +7,7 @@ use quicksilver::{
     Future,
     Result,
     geom::{Rectangle, Transform, Vector},
-    graphics::{Background::Img, Color, Image, View},
+    graphics::{Background, Background::Img, Background::Blended, Color, Image, View},
     input::{Key, ButtonState},
     lifecycle::{Window},
 };
@@ -51,6 +51,57 @@ impl Game {
         }
     }
 
+    fn drop(&mut self) {
+        // send drop command
+        self.client.command(format!("call:drop:\"{}\" {}",
+                                    self.player_key,
+                                    serde_json::to_string(&self.state).unwrap()).as_str());
+
+        // update the field in advance
+        for y in 0..4 {
+            for x in 0..4 {
+                let shape = self.client.games[self.player_id].current as usize;
+                let rotation = self.state.rotation as usize;
+                let col = tetris_model::shapes::SHAPES[shape][rotation][x+y*4];
+                if col != 0 {
+                    let index = ((self.state.y+y as i32)*10 + self.state.x+x as i32) as usize;
+                    self.client.games[self.player_id].field[index] = col;
+                }
+            }
+        }
+
+        // update the current tetrimino in advance
+        self.state = ActiveState::new();
+        self.client.games[self.player_id].current = self.client.games[self.player_id].next[0];
+    }
+
+    fn draw_state<F: Fn(&Image)->Background>(&self,
+                                             window: &mut Window,
+                                             blocks: &[Image],
+                                             state: ActiveState,
+                                             make_bg: F) {
+        let tetrimino = self.client.games[self.player_id].current as usize;
+        for y in 0..4 {
+            for x in 0..4 {
+                let block =
+                    tetris_model::shapes::SHAPES[tetrimino][state.rotation as usize][x+y*4];
+
+                match block {
+                    0 => (),
+                    c => {
+                        let pos = Vector::new(240.0, 20.0);
+                        let x = state.x + x as i32;
+                        let y = state.y + y as i32;
+                        let rect = Rectangle::new(Vector::new(x as f32 * 16.0, y as f32 * 16.0) + pos,
+                                                  Vector::new(16.0, 16.0));
+
+                        window.draw(&rect, make_bg(&blocks[c as usize]));
+                    }
+                }
+            }
+        }
+    }
+
     fn draw_game(&self, window: &mut Window, blocks: &[Image], field: &[u8], pos: Vector) {
         let w = blocks[0].area().width();
         let h = blocks[1].area().height();
@@ -73,10 +124,15 @@ impl Scene for Game {
     fn update(&mut self, _: &mut Window) -> Result<()> {
         self.client.update();
 
-        if self.client.started {
+        if self.client.started && self.client.games[self.player_id].current != 8 {
             while self.last_line_drop.elapsed() >= Duration::from_millis(self.client.speed) {
                 self.last_line_drop += Duration::from_millis(self.client.speed);
+                let before = self.state;
                 self.state = self.client.games[self.player_id].slide_down(self.state);
+
+                if before.y == self.state.y {
+                    self.drop();
+                }
             }
         } else {
             self.last_line_drop = Instant::now();
@@ -96,6 +152,10 @@ impl Scene for Game {
                 },
                 Event::Key(Key::Down, ButtonState::Pressed) => {
                     self.state = self.client.games[self.player_id].slide_down(self.state);
+                },
+                Event::Key(Key::Up, ButtonState::Pressed) => {
+                    self.state = self.client.games[self.player_id].hard_drop(self.state);
+                    self.drop();
                 },
                 Event::Key(Key::A, ButtonState::Pressed) => {
                     self.state = self.client.games[self.player_id].rotate_left(self.state);
@@ -125,40 +185,28 @@ impl Scene for Game {
         let bg = Rectangle::new(Vector::new(240.0, 20.0), Vector::new(160.0, 320.0));
         window.draw_ex(&bg, Img(&self.own_bg), Transform::IDENTITY, -1);
 
-        // render the blocks for the main game
         let blocks: Vec<_> = (0..8)
             .map(|i| {
                 self.own_blocks.subimage(Rectangle::new(Vector::new(i as f32 * 16.0, 0.0),
                                                         Vector::new(16.0, 16.0)))
             })
             .collect();
+
+        // render the blocks for the main game
         self.draw_game(window,
                        blocks.as_slice(),
                        self.client.games[self.player_id].field.as_slice(),
                        Vector::new(240.0, 20.0));
 
         // render the falling tetrimino
-        let tetrimino = self.client.games[self.player_id].current as usize;
-        for y in 0..4 {
-            for x in 0..4 {
-                let block =
-                    tetris_model::shapes::SHAPES[tetrimino][self.state.rotation as usize][x+y*4];
-
-                match block {
-                    0 => (),
-                    c => {
-                        let pos = Vector::new(240.0, 20.0);
-                        let x = self.state.x + x as i32;
-                        let y = self.state.y + y as i32;
-                        let rect = Rectangle::new(Vector::new(x as f32 * 16.0, y as f32 * 16.0) + pos,
-                                                  Vector::new(16.0, 16.0));
-
-                        window.draw(&rect, Img(&blocks[c as usize]));
-                    }
-                }
-
-            }
-        }
+        self.draw_state(window,
+                        blocks.as_slice(),
+                        self.state,
+                        |img| Img(img));
+        self.draw_state(window,
+                        blocks.as_slice(),
+                        self.client.games[self.player_id].hard_drop(self.state),
+                        |img| Blended(img, Color::WHITE.with_alpha(0.3)));
 
         for y in 0..7 {
             for x in 0..14 {
