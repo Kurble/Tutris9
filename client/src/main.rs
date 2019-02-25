@@ -3,6 +3,7 @@ extern crate mirror;
 extern crate tetris_model;
 extern crate serde;
 extern crate serde_json;
+extern crate rand;
 
 mod client;
 mod game;

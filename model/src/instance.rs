@@ -3,7 +3,8 @@ use mirror::*;
 use std::iter::{repeat, repeat_with};
 use std::time::{Instant, Duration};
 use std::mem::replace;
-use rand::random;
+use rand::{SeedableRng, Rng, random};
+use rand::rngs::StdRng;
 
 pub struct ServerState {
     pub players: Vec<String>,
@@ -30,9 +31,11 @@ pub struct InstanceState {
 #[ReflectFn(
     Fn(name="clear", args="1"),
     Fn(name="compact", args="0"),
+    Fn(name="attack", args="2"),
 )]
 #[derive(Serialize, Deserialize, Reflect)]
 pub struct PlayerState {
+    pub random: Hidden<StdRng>,
     pub field: Vec<u8>,
     pub score: usize,
     pub hold: u8,
@@ -40,7 +43,6 @@ pub struct PlayerState {
     pub next: Vec<u8>,
     pub ko: bool,
     pub target: usize,
-    pub seed: usize,
     pub moves: usize,
 }
 
@@ -128,14 +130,18 @@ impl InstanceState {
         if let Some(id) = self.context.as_ref().unwrap().player_index(player.as_str()) {
             let context = self.context.as_mut().unwrap();
 
+            context.broadcast(format!("games/{}/moves/set:{}", id, self.games[id].moves + 1));
+
+            let mut ko = false;
+
             // place the tetrimino
             for y in 0..4 {
                 for x in 0..4 {
                     let shape = self.games[id].current as usize;
                     let rotation = state.rotation as usize;
                     let col = super::shapes::SHAPES[shape][rotation][x+y*4];
-                    if col != 0 {
-                        let index = (state.y+y as i32)*10 + state.x+x as i32;
+                    if col != 0 && state.y + y as i32 >= 0 {
+                        let index = (state.y + y as i32) * 10 + state.x + x as i32;
 
                         self.games[id].field[index as usize] = col;
 
@@ -151,7 +157,7 @@ impl InstanceState {
             let mut have_clear = false;
             for y in 0..4 {
                 let y = state.y + y;
-                if y >= 0 && y < 20 {
+                if y >= 0 && y < 21 {
                     let line = (y * 10) as usize;
                     let clear = self.games[id].field[line..line + 10]
                         .iter()
@@ -166,60 +172,66 @@ impl InstanceState {
                 context.broadcast(format!("games/{}/call:compact:", id));
             }
 
+            // check for k.o.
+            if self.games[id].field[..10].iter().find(|&&x| x > 0).is_some() {
+                context.player_ko(player.as_str());
+            }
+
             // move on to the next piece
+            let next = self.games[id].random.as_mut().unwrap().gen::<u8>() % 7;
             context.broadcast(format!("games/{}/current/set:{}",
                                       id,
                                       self.games[id].next[0]));
             context.broadcast(format!("games/{}/next/remove:0", id));
-            context.broadcast(format!("games/{}/next/push:{}", id, 1));
+            context.broadcast(format!("games/{}/next/push:{}", id, next));
         }
     }
 }
 
 impl PlayerState {
     pub fn new() -> Self {
+        let mut rng = StdRng::from_seed(random());
+        let current = rng.gen::<u8>() % 7;
+        let next = repeat_with(|| rng.gen::<u8>() % 7).take(32).collect();
+
         Self {
-            field: repeat(0).take(10*20).collect(),
+            random: Hidden::new(rng),
+
+            field: repeat(0).take(10*21).collect(),
             score: 0,
-            current: random::<u8>() % 7,
+            current,
             hold: 8,
-            next: repeat_with(|| random::<u8>() % 7).take(32).collect(),
+            next,
             ko: false,
             target: 0,
-            seed: random(),
             moves: 0,
         }
     }
 
-    pub fn clear(&mut self, line: usize) {
+    fn clear(&mut self, line: usize) {
         for i in 0..10 {
             self.field[line*10+i] = 0;
         }
     }
 
-    pub fn compact(&mut self) {
-        let mut y = 19;
-        while y > 0 {
-            let line = (y * 10) as usize;
-
-            for _ in 0..4 {
-                let contents = self.field[line..]
-                    .iter()
-                    .take(10)
-                    .find(|&&x| x > 0)
-                    .is_some();
-
-                if contents {
-                    break;
-                } else {
+    fn compact(&mut self) {
+        for _ in 0..4 {
+            for y in 0..20 {
+                let y = 20 - y;
+                if self.field[(y * 10)..].iter().take(10).find(|&&x| x > 0).is_none() {
                     for x in 0..10 {
                         self.field[y*10 + x] = self.field[(y-1)*10 + x];
                         self.field[(y-1)*10 + x] = 0;
                     }
                 }
             }
+        }
+    }
 
-            y -= 1;
+    fn attack(&mut self, column: usize, count: usize) {
+        for _ in 0..count {
+            self.field.extend((0..10).map(|x| if x == column { 0 } else { 8 }));
+            self.field.drain(..10).find(|&x| x > 0).is_some();
         }
     }
 
@@ -232,7 +244,7 @@ impl PlayerState {
                 if grid[x+y*4] != 0 {
                     let x = state.x + x as i32;
                     let y = state.y + y as i32;
-                    if x < 0 || x > 9 || y > 19 || (y >= 0 && field[(x+y*10) as usize] != 0) {
+                    if x < 0 || x > 9 || y > 20 || (y >= 0 && field[(x+y*10) as usize] != 0) {
                         return true;
                     }
                 }
@@ -283,7 +295,24 @@ impl PlayerState {
             rotation: if state.rotation == 0 { 3 } else { state.rotation-1 },
         };
 
-        if self.collision(next) { state } else { next }
+        let current = self.current as usize;
+        let rotation = next.rotation as usize;
+
+        if self.collision(next) {
+            for kick in super::shapes::KICK_LEFT[current][rotation].iter() {
+                let kicked = ActiveState {
+                    x: next.x + kick.0,
+                    y: next.y - kick.1,
+                    rotation: next.rotation
+                };
+                if !self.collision(kicked) {
+                    return kicked;
+                }
+            }
+            state
+        } else {
+            next
+        }
     }
 
     /// Calculates a new state after rotating right once, for the current tetrimino.
@@ -294,7 +323,24 @@ impl PlayerState {
             rotation: if state.rotation == 3 { 0 } else { state.rotation+1 },
         };
 
-        if self.collision(next) { state } else { next }
+        let current = self.current as usize;
+        let rotation = next.rotation as usize;
+
+        if self.collision(next) {
+            for kick in super::shapes::KICK_RIGHT[current][rotation].iter() {
+                let kicked = ActiveState {
+                    x: next.x + kick.0,
+                    y: next.y - kick.1,
+                    rotation: next.rotation
+                };
+                if !self.collision(kicked) {
+                    return kicked;
+                }
+            }
+            state
+        } else {
+            next
+        }
     }
 
     /// Calculates the state after performing a hard drop

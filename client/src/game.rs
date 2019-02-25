@@ -2,6 +2,7 @@ use super::*;
 use super::client::Client;
 use tetris_model::instance::*;
 use std::time::{Instant, Duration};
+use rand::{thread_rng, Rng};
 
 use quicksilver::{
     Future,
@@ -25,11 +26,20 @@ pub struct Game {
     own_bg: Image,
     other_bg: Image,
     ui: Image,
+
+    mapping: [usize; 8],
 }
 
 impl Game {
     pub fn new(mut client: Client<InstanceState>, player_id: usize, player_key: String) -> Self {
         client.command(format!("call:login:\"{}\"", player_key).as_str());
+
+        let mut mapping = [0; 8];
+        let mut mapping_i = (0..9).filter(|&i| i != player_id);
+        for i in mapping.iter_mut() {
+            *i = mapping_i.next().unwrap();
+        }
+        thread_rng().shuffle(&mut mapping);
 
         Self {
             client,
@@ -44,10 +54,12 @@ impl Game {
             last_line_drop: Instant::now(),
 
             own_blocks: Image::load("own_blocks.png").wait().expect("unable to load own_blocks.png"),
-            other_blocks: Image::load("other_blocks.png").wait().expect("unable to load other_blocks.png"),
+            other_blocks: Image::load("help_blocks.png").wait().expect("unable to load other_blocks.png"),
             own_bg: Image::load("own_bg.png").wait().expect("unable to load own_bg.png"),
             other_bg: Image::load("other_bg.png").wait().expect("unable to load other_bg.png"),
             ui: Image::load("ui.png").wait().expect("unable to load ui.png"),
+
+            mapping,
         }
     }
 
@@ -64,8 +76,10 @@ impl Game {
                 let rotation = self.state.rotation as usize;
                 let col = tetris_model::shapes::SHAPES[shape][rotation][x+y*4];
                 if col != 0 {
-                    let index = ((self.state.y+y as i32)*10 + self.state.x+x as i32) as usize;
-                    self.client.games[self.player_id].field[index] = col;
+                    if self.state.y + y as i32 >= 0 {
+                        let index = ((self.state.y + y as i32) * 10 + self.state.x + x as i32) as usize;
+                        self.client.games[self.player_id].field[index] = col;
+                    }
                 }
             }
         }
@@ -91,7 +105,7 @@ impl Game {
                     c => {
                         let pos = Vector::new(240.0, 20.0);
                         let x = state.x + x as i32;
-                        let y = state.y + y as i32;
+                        let y = state.y + y as i32 - 1;
                         let rect = Rectangle::new(Vector::new(x as f32 * 16.0, y as f32 * 16.0) + pos,
                                                   Vector::new(16.0, 16.0));
 
@@ -113,7 +127,7 @@ impl Game {
                 b => {
                     let rect = Rectangle::new(Vector::new(w * x as f32, h * y as f32) + pos,
                                               Vector::new(w, h));
-                    window.draw(&rect, Img(&blocks[b as usize]));
+                    window.draw(&rect, Img(&blocks[b as usize % 8]));
                 },
             }
         }
@@ -124,7 +138,9 @@ impl Scene for Game {
     fn update(&mut self, _: &mut Window) -> Result<()> {
         self.client.update();
 
-        if self.client.started && self.client.games[self.player_id].current != 8 {
+        if self.client.started &&
+            !self.client.games[self.player_id].ko &&
+            self.client.games[self.player_id].current != 8 {
             while self.last_line_drop.elapsed() >= Duration::from_millis(self.client.speed) {
                 self.last_line_drop += Duration::from_millis(self.client.speed);
                 let before = self.state;
@@ -142,7 +158,7 @@ impl Scene for Game {
     }
 
     fn event(&mut self, event: &Event, _: &mut Window) -> Result<()> {
-        if self.client.started {
+        if self.client.started && !self.client.games[self.player_id].ko {
             match event {
                 Event::Key(Key::Left, ButtonState::Pressed) => {
                     self.state = self.client.games[self.player_id].slide_left(self.state);
@@ -172,14 +188,14 @@ impl Scene for Game {
 
     fn draw(&mut self, window: &mut Window) -> Result<()> {
         // clear the window
-        window.clear(Color { r: 0.1, g: 0.1, b: 0.4, a: 1.0 })?;
+        window.clear(Color { r: 0.1, g: 0.2, b: 0.4, a: 1.0 })?;
 
         // make sure we're rendering in 16:9 with the right pixel scale
         let view = Rectangle::new(Vector::ZERO, Vector::new(640.0, 360.0));
         window.set_view(View::new(view));
 
         // render the ui background
-        window.draw_ex(&view, Img(&self.ui), Transform::IDENTITY, -2);
+        //window.draw_ex(&view, Img(&self.ui), Transform::IDENTITY, -2);
 
         // render a background for the main game
         let bg = Rectangle::new(Vector::new(240.0, 20.0), Vector::new(160.0, 320.0));
@@ -195,32 +211,66 @@ impl Scene for Game {
         // render the blocks for the main game
         self.draw_game(window,
                        blocks.as_slice(),
-                       self.client.games[self.player_id].field.as_slice(),
+                       &self.client.games[self.player_id].field[10..],
                        Vector::new(240.0, 20.0));
 
         // render the falling tetrimino
-        self.draw_state(window,
-                        blocks.as_slice(),
-                        self.state,
-                        |img| Img(img));
-        self.draw_state(window,
-                        blocks.as_slice(),
-                        self.client.games[self.player_id].hard_drop(self.state),
-                        |img| Blended(img, Color::WHITE.with_alpha(0.3)));
+        if !self.client.games[self.player_id].ko {
+            self.draw_state(window,
+                            blocks.as_slice(),
+                            self.state,
+                            |img| Img(img));
+            self.draw_state(window,
+                            blocks.as_slice(),
+                            self.client.games[self.player_id].hard_drop(self.state),
+                            |img| Blended(img, Color::WHITE.with_alpha(0.3)));
+        }
 
-        for y in 0..7 {
-            for x in 0..14 {
-                let bg = if x < 7 {
-                    Rectangle::new(Vector::new(15.0 + x as f32 * 25.0,
-                                               22.0 + y as f32 * 45.0),
-                                   Vector::new(20.0, 40.0))
-                } else {
-                    Rectangle::new(Vector::new(450.0 + (x-7) as f32 * 25.0,
-                                               22.0 + y as f32 * 45.0),
-                                   Vector::new(20.0, 40.0))
-                };
+        let blocks: Vec<_> = (0..8)
+            .map(|i| {
+                self.other_blocks.subimage(Rectangle::new(Vector::new(i as f32 * 8.0, 0.0),
+                                                          Vector::new(8.0, 8.0)))
+            })
+            .collect();
 
-                window.draw_ex(&bg, Img(&self.other_bg), Transform::IDENTITY, -1);
+        // render the next tetriminoes
+        for i in 0..6 {
+            let id = self.client.games[self.player_id].next[i] as usize;
+            let pos = Vector::new(408.0, 24.0 + 32.0 * i as f32);
+            for y in 0..4 {
+                for x in 0..4 {
+                    let color = tetris_model::shapes::SHAPES[id][0][x+y*4] as usize;
+                    if color > 0 {
+                        let rect = Rectangle::new(Vector::new(8.0 * x as f32, 8.0 * y as f32) + pos,
+                                                  Vector::new(8.0, 8.0));
+                        window.draw(&rect, Img(&blocks[color]));
+                    }
+                }
+            }
+        }
+
+        // render other games
+        for y in 0..2 {
+            for x in 0..4 {
+                let i = self.mapping[x + y * 4];
+                if i < self.client.games.len() {
+                    let bg = if x < 2 {
+                        Rectangle::new(Vector::new(20.0 + x as f32 * 90.0,
+                                                   20.0 + y as f32 * 165.0),
+                                       Vector::new(80.0, 160.0))
+                    } else {
+                        Rectangle::new(Vector::new(450.0 + (x-2) as f32 * 90.0,
+                                                   20.0 + y as f32 * 165.0),
+                                       Vector::new(80.0, 160.0))
+                    };
+
+                    window.draw_ex(&bg, Img(&self.other_bg), Transform::IDENTITY, -1);
+
+                    self.draw_game(window,
+                                   blocks.as_slice(),
+                                   &self.client.games[i].field[10..],
+                                   bg.pos);
+                }
             }
         }
 
