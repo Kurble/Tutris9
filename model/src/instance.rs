@@ -3,8 +3,9 @@ use mirror::*;
 use std::iter::{repeat, repeat_with};
 use std::time::{Instant, Duration};
 use std::mem::replace;
-use rand::{SeedableRng, Rng, random};
+use rand::{SeedableRng, Rng, random, thread_rng};
 use rand::rngs::StdRng;
+use rand::seq::IteratorRandom;
 
 pub struct ServerState {
     pub players: Vec<String>,
@@ -16,6 +17,7 @@ pub struct ServerState {
 #[ReflectFn(
     Fn(name="login", args="1"),
     Fn(name="drop", args="2"),
+    Fn(name="target", args="2"),
 )]
 #[derive(Serialize, Deserialize, Reflect)]
 pub struct InstanceState {
@@ -94,7 +96,43 @@ impl InstanceState {
         }
     }
 
-    pub fn login(&mut self, player: String) {
+    pub fn server_update(&mut self) {
+        let context = self.context.as_mut().unwrap();
+
+        if Instant::now() > context.deadline && self.started == false {
+            context.broadcast(String::from("started/set:true"));
+            context.broadcast(String::from("status/set:\"In game\""));
+            let missed = replace(&mut context.awaiting, Vec::new());
+
+            for player in missed {
+                context.player_ko(player.as_str());
+            }
+        }
+
+        if self.started && !self.done && self.games.iter().filter(|g| !g.ko).count() < 2 {
+            context.broadcast(String::from("done/set:true"));
+            self.done = true;
+        }
+
+        if !self.done {
+            for (i, player) in self.games.iter().enumerate() {
+                if player.target >= self.games.len() || self.games[player.target].ko ||
+                    player.target == i {
+                    let new_target = self.games
+                        .iter()
+                        .enumerate()
+                        .filter(|&(j, g)| i != j && !g.ko)
+                        .map(|(j, _)| j)
+                        .choose(&mut thread_rng())
+                        .unwrap();
+
+                    context.broadcast(format!("games/{}/target/set:{}", i, new_target));
+                }
+            }
+        }
+    }
+
+    fn login(&mut self, player: String) {
         if self.started == false {
             let context = self.context.as_mut().unwrap();
             context.awaiting.retain(|key| key.as_str() != player.as_str());
@@ -112,78 +150,88 @@ impl InstanceState {
         }
     }
 
-    pub fn server_update(&mut self) {
-        let context = self.context.as_mut().unwrap();
+    fn drop(&mut self, player: String, state: ActiveState) {
+        if let Some(id) = self.context.as_ref().unwrap().player_index(player.as_str()) {
+            if !self.done && !self.games[id].ko {
+                let context = self.context.as_mut().unwrap();
 
-        if Instant::now() > context.deadline && self.started == false {
-            context.broadcast(String::from("started/set:true"));
-            context.broadcast(String::from("status/set:\"In game\""));
-            let missed = replace(&mut context.awaiting, Vec::new());
+                context.broadcast(format!("games/{}/moves/set:{}", id, self.games[id].moves + 1));
 
-            for player in missed {
-                context.player_ko(player.as_str());
+                let mut ko = false;
+
+                // place the tetrimino
+                for y in 0..4 {
+                    for x in 0..4 {
+                        let shape = self.games[id].current as usize;
+                        let rotation = state.rotation as usize;
+                        let col = super::shapes::SHAPES[shape][rotation][x + y * 4];
+                        if col != 0 && state.y + y as i32 >= 0 {
+                            let index = (state.y + y as i32) * 10 + state.x + x as i32;
+
+                            self.games[id].field[index as usize] = col;
+
+                            context.broadcast(format!("games/{}/field/{}/set:{}",
+                                                      id,
+                                                      index,
+                                                      col));
+                        }
+                    }
+                }
+
+                // check for cleared lines
+                let mut have_clear = false;
+                for y in 0..4 {
+                    let y = state.y + y;
+                    if y >= 0 && y < 21 {
+                        let line = (y * 10) as usize;
+                        let clear = self.games[id].field[line..line + 10]
+                            .iter()
+                            .fold(true, |clear, &b| clear && b > 0);
+                        if clear {
+                            context.broadcast(format!("games/{}/call:clear:{}", id, y));
+                            have_clear = true;
+                        }
+                    }
+                }
+                if have_clear {
+                    context.broadcast(format!("games/{}/call:compact:", id));
+                }
+
+                // check for k.o.
+                if self.games[id].field[..10].iter().find(|&&x| x > 0).is_some() {
+                    context.player_ko(player.as_str());
+                }
+
+                // move on to the next piece
+                let next = self.games[id].random.as_mut().unwrap().gen::<u8>() % 7;
+                context.broadcast(format!("games/{}/current/set:{}",
+                                          id,
+                                          self.games[id].next[0]));
+                context.broadcast(format!("games/{}/next/remove:0", id));
+                context.broadcast(format!("games/{}/next/push:{}", id, next));
             }
         }
     }
 
-    pub fn drop(&mut self, player: String, state: ActiveState) {
+    fn target(&mut self, player: String, target: usize) {
         if let Some(id) = self.context.as_ref().unwrap().player_index(player.as_str()) {
-            let context = self.context.as_mut().unwrap();
+            if !self.done && !self.games[id].ko {
+                let mut actual_target = target;
 
-            context.broadcast(format!("games/{}/moves/set:{}", id, self.games[id].moves + 1));
-
-            let mut ko = false;
-
-            // place the tetrimino
-            for y in 0..4 {
-                for x in 0..4 {
-                    let shape = self.games[id].current as usize;
-                    let rotation = state.rotation as usize;
-                    let col = super::shapes::SHAPES[shape][rotation][x+y*4];
-                    if col != 0 && state.y + y as i32 >= 0 {
-                        let index = (state.y + y as i32) * 10 + state.x + x as i32;
-
-                        self.games[id].field[index as usize] = col;
-
-                        context.broadcast(format!("games/{}/field/{}/set:{}",
-                                                  id,
-                                                  index,
-                                                  col));
-                    }
-                }
-            }
-
-            // check for cleared lines
-            let mut have_clear = false;
-            for y in 0..4 {
-                let y = state.y + y;
-                if y >= 0 && y < 21 {
-                    let line = (y * 10) as usize;
-                    let clear = self.games[id].field[line..line + 10]
+                if actual_target >= self.games.len() || self.games[actual_target].ko ||
+                    actual_target == id {
+                    actual_target = self.games
                         .iter()
-                        .fold(true, |clear, &b| clear && b > 0);
-                    if clear {
-                        context.broadcast(format!("games/{}/call:clear:{}", id, y));
-                        have_clear = true;
-                    }
+                        .enumerate()
+                        .filter(|&(j, g)| id != j && !g.ko)
+                        .map(|(j, _)| j)
+                        .choose(&mut thread_rng())
+                        .unwrap();
                 }
-            }
-            if have_clear {
-                context.broadcast(format!("games/{}/call:compact:", id));
-            }
 
-            // check for k.o.
-            if self.games[id].field[..10].iter().find(|&&x| x > 0).is_some() {
-                context.player_ko(player.as_str());
+                self.context.as_mut().unwrap()
+                    .broadcast(format!("games/{}/target/set:{}", id, actual_target));
             }
-
-            // move on to the next piece
-            let next = self.games[id].random.as_mut().unwrap().gen::<u8>() % 7;
-            context.broadcast(format!("games/{}/current/set:{}",
-                                      id,
-                                      self.games[id].next[0]));
-            context.broadcast(format!("games/{}/next/remove:0", id));
-            context.broadcast(format!("games/{}/next/push:{}", id, next));
         }
     }
 }
@@ -203,7 +251,7 @@ impl PlayerState {
             hold: 8,
             next,
             ko: false,
-            target: 0,
+            target: 10,
             moves: 0,
         }
     }

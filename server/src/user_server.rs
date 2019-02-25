@@ -43,7 +43,7 @@ impl<T: for<'a> Reflect<'a> + Serialize> UserServer<T> {
             println!("User connected on {}", address);
 
             // send over the base value to the use as part of the protocol
-            connection.send(serde_json::to_string_pretty(&value).unwrap().as_str());
+            connection.send(serde_json::to_string(&value).unwrap().as_str());
 
             self.connections.push(User { value, connection });
         }

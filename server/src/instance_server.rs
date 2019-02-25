@@ -41,7 +41,7 @@ impl<T: for<'a> Reflect<'a> + Serialize> InstanceServer<T> {
         if let Ok((stream, _)) = self.listener.accept() {
             let mut connection = Connection::new(stream).unwrap();
 
-            connection.send(serde_json::to_string_pretty(&self.value).unwrap().as_str());
+            connection.send(serde_json::to_string(&self.value).unwrap().as_str());
 
             self.connections.push(connection);
         }

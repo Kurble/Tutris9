@@ -2,7 +2,8 @@ use super::*;
 use super::client::Client;
 use tetris_model::instance::*;
 use std::time::{Instant, Duration};
-use rand::{thread_rng, Rng};
+use rand::thread_rng;
+use rand::seq::SliceRandom;
 
 use quicksilver::{
     Future,
@@ -25,7 +26,8 @@ pub struct Game {
     other_blocks: Image,
     own_bg: Image,
     other_bg: Image,
-    ui: Image,
+    ko: Image,
+    //ui: Image,
 
     mapping: [usize; 8],
 }
@@ -39,7 +41,7 @@ impl Game {
         for i in mapping.iter_mut() {
             *i = mapping_i.next().unwrap();
         }
-        thread_rng().shuffle(&mut mapping);
+        mapping.shuffle(&mut thread_rng());
 
         Self {
             client,
@@ -57,7 +59,8 @@ impl Game {
             other_blocks: Image::load("help_blocks.png").wait().expect("unable to load other_blocks.png"),
             own_bg: Image::load("own_bg.png").wait().expect("unable to load own_bg.png"),
             other_bg: Image::load("other_bg.png").wait().expect("unable to load other_bg.png"),
-            ui: Image::load("ui.png").wait().expect("unable to load ui.png"),
+            ko: Image::load("ko.png").wait().expect("error"),
+            //ui: Image::load("ui.png").wait().expect("unable to load ui.png"),
 
             mapping,
         }
@@ -266,10 +269,14 @@ impl Scene for Game {
 
                     window.draw_ex(&bg, Img(&self.other_bg), Transform::IDENTITY, -1);
 
-                    self.draw_game(window,
-                                   blocks.as_slice(),
-                                   &self.client.games[i].field[10..],
+                    self.draw_game(window, blocks.as_slice(), &self.client.games[i].field[10..],
                                    bg.pos);
+
+                    if self.client.games[i].ko {
+                        window.draw_ex(&Rectangle::new(Vector::new(16.0, 56.0) + bg.pos,
+                                                       Vector::new(48.0, 48.0)),
+                                       Img(&self.ko), Transform::IDENTITY, 1);
+                    }
                 }
             }
         }

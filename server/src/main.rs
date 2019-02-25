@@ -129,6 +129,7 @@ fn run_instance_server(address: String, users: Vec<String>) -> std::io::Result<(
         }
 
         if server.done || (server.started && server.connections() == 0) {
+            ::std::thread::sleep(Duration::from_secs(1));
             break;
         }
     }
