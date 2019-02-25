@@ -33,7 +33,7 @@ pub struct InstanceState {
 #[ReflectFn(
     Fn(name="clear", args="1"),
     Fn(name="compact", args="0"),
-    Fn(name="attack", args="2"),
+    Fn(name="gen_garbage", args="0"),
 )]
 #[derive(Serialize, Deserialize, Reflect)]
 pub struct PlayerState {
@@ -46,6 +46,8 @@ pub struct PlayerState {
     pub ko: bool,
     pub target: usize,
     pub moves: usize,
+    pub combo: usize,
+    pub garbage: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
@@ -179,7 +181,7 @@ impl InstanceState {
                 }
 
                 // check for cleared lines
-                let mut have_clear = false;
+                let mut lines = 0;
                 for y in 0..4 {
                     let y = state.y + y;
                     if y >= 0 && y < 21 {
@@ -189,12 +191,36 @@ impl InstanceState {
                             .fold(true, |clear, &b| clear && b > 0);
                         if clear {
                             context.broadcast(format!("games/{}/call:clear:{}", id, y));
-                            have_clear = true;
+                            lines += 1;
                         }
                     }
                 }
-                if have_clear {
+                if lines > 0 {
                     context.broadcast(format!("games/{}/call:compact:", id));
+                    context.broadcast(format!("games/{}/combo/set:{}", id,
+                                              self.games[id].combo + 1));
+
+                    let garbage = match lines {
+                        2 => 1,
+                        3 => 2,
+                        4 => 4,
+                        _ => 0,
+                    };
+
+                    if garbage > 0 {
+                        let column = random::<u32>() % 10;
+                        for _ in 0..garbage {
+                            context.broadcast(format!("games/{}/garbage/push:{}",
+                                                      self.games[id].target, column));
+                        }
+                    }
+
+                } else if self.games[id].combo > 0 {
+                    context.broadcast(format!("games/{}/combo/set:{}", id, 0));
+                }
+
+                if self.games[id].garbage.len() > 0 {
+                    context.broadcast(format!("games/{}/call:gen_garbage:", id));
                 }
 
                 // check for k.o.
@@ -253,6 +279,8 @@ impl PlayerState {
             ko: false,
             target: 10,
             moves: 0,
+            combo: 0,
+            garbage: Vec::new(),
         }
     }
 
@@ -276,8 +304,8 @@ impl PlayerState {
         }
     }
 
-    fn attack(&mut self, column: usize, count: usize) {
-        for _ in 0..count {
+    fn gen_garbage(&mut self) {
+        for column in self.garbage.drain(0..) {
             self.field.extend((0..10).map(|x| if x == column { 0 } else { 8 }));
             self.field.drain(..10).find(|&x| x > 0).is_some();
         }
