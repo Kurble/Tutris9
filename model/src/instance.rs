@@ -18,6 +18,7 @@ pub struct ServerState {
     Fn(name="login", args="1"),
     Fn(name="drop", args="2"),
     Fn(name="target", args="2"),
+    Fn(name="hold", args="1"),
 )]
 #[derive(Serialize, Deserialize, Reflect)]
 pub struct InstanceState {
@@ -41,13 +42,14 @@ pub struct PlayerState {
     pub field: Vec<u8>,
     pub score: usize,
     pub hold: u8,
+    pub held: bool,
     pub current: u8,
     pub next: Vec<u8>,
     pub ko: bool,
     pub target: usize,
     pub moves: usize,
     pub combo: usize,
-    pub garbage: Vec<u8>,
+    pub garbage: Vec<(u8, u8)>,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
@@ -134,6 +136,13 @@ impl InstanceState {
         }
     }
 
+    pub fn in_game(&self, player: usize) -> bool {
+        self.started &&
+            !self.done &&
+            !self.games[player].ko &&
+            self.games_ko.len() != self.games.len() - 1
+    }
+
     fn login(&mut self, player: String) {
         if self.started == false {
             let context = self.context.as_mut().unwrap();
@@ -154,12 +163,14 @@ impl InstanceState {
 
     fn drop(&mut self, player: String, state: ActiveState) {
         if let Some(id) = self.context.as_ref().unwrap().player_index(player.as_str()) {
-            if !self.done && !self.games[id].ko {
+            if self.in_game(id) {
                 let context = self.context.as_mut().unwrap();
 
                 context.broadcast(format!("games/{}/moves/set:{}", id, self.games[id].moves + 1));
 
-                let mut ko = false;
+                if self.games[id].held {
+                    context.broadcast(format!("games/{}/held/set:false", id));
+                }
 
                 // place the tetrimino
                 for y in 0..4 {
@@ -209,9 +220,13 @@ impl InstanceState {
 
                     if garbage > 0 {
                         let column = random::<u32>() % 10;
-                        for _ in 0..garbage {
-                            context.broadcast(format!("games/{}/garbage/push:{}",
-                                                      self.games[id].target, column));
+                        for i in 0..garbage {
+                            if i < self.games[id].garbage.len() {
+                                context.broadcast(format!("games/{}/garbage/remove:0", id));
+                            } else {
+                                context.broadcast(format!("games/{}/garbage/push:[{},3]",
+                                                          self.games[id].target, column));
+                            }
                         }
                     }
 
@@ -241,7 +256,7 @@ impl InstanceState {
 
     fn target(&mut self, player: String, target: usize) {
         if let Some(id) = self.context.as_ref().unwrap().player_index(player.as_str()) {
-            if !self.done && !self.games[id].ko {
+            if self.in_game(id) {
                 let mut actual_target = target;
 
                 if actual_target >= self.games.len() || self.games[actual_target].ko ||
@@ -260,6 +275,29 @@ impl InstanceState {
             }
         }
     }
+
+    fn hold(&mut self, player: String) {
+        if let Some(id) = self.context.as_ref().unwrap().player_index(player.as_str()) {
+            if self.in_game(id) && !self.games[id].held {
+                let context = self.context.as_mut().unwrap();
+
+                self.games[id].held = true;
+
+                context.broadcast(format!("games/{}/hold/set:{}", id, self.games[id].current));
+                context.broadcast(format!("games/{}/held/set:true", id));
+
+                if self.games[id].hold == 8 {
+                    let next = self.games[id].random.as_mut().unwrap().gen::<u8>() % 7;
+                    context.broadcast(format!("games/{}/current/set:{}", id,
+                                              self.games[id].next[0]));
+                    context.broadcast(format!("games/{}/next/remove:0", id));
+                    context.broadcast(format!("games/{}/next/push:{}", id, next));
+                } else {
+                    context.broadcast(format!("games/{}/current/set:{}", id, self.games[id].hold));
+                }
+            }
+        }
+    }
 }
 
 impl PlayerState {
@@ -275,6 +313,7 @@ impl PlayerState {
             score: 0,
             current,
             hold: 8,
+            held: false,
             next,
             ko: false,
             target: 10,
@@ -305,10 +344,17 @@ impl PlayerState {
     }
 
     fn gen_garbage(&mut self) {
-        for column in self.garbage.drain(0..) {
-            self.field.extend((0..10).map(|x| if x == column { 0 } else { 8 }));
-            self.field.drain(..10).find(|&x| x > 0).is_some();
+        for (column, delay) in self.garbage.iter_mut() {
+            if *delay > 0 {
+                *delay -= 1;
+            }
+            if *delay == 0 {
+                self.field.extend((0..10).map(|x| if x == *column { 0 } else { 8 }));
+                self.field.drain(..10).find(|&x| x > 0).is_some();
+            }
         }
+
+        self.garbage.retain(|(_, delay)| *delay > 0);
     }
 
     fn collision(&self, state: ActiveState) -> bool {

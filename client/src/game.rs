@@ -27,6 +27,8 @@ pub struct Game {
     own_bg: Image,
     other_bg: Image,
     ko: Image,
+    bomb: Image,
+    bomb_small: Image,
     //ui: Image,
 
     mapping: [usize; 8],
@@ -55,11 +57,13 @@ impl Game {
             },
             last_line_drop: Instant::now(),
 
-            own_blocks: Image::load("own_blocks.png").wait().expect("unable to load own_blocks.png"),
-            other_blocks: Image::load("help_blocks.png").wait().expect("unable to load other_blocks.png"),
-            own_bg: Image::load("own_bg.png").wait().expect("unable to load own_bg.png"),
-            other_bg: Image::load("other_bg.png").wait().expect("unable to load other_bg.png"),
-            ko: Image::load("ko.png").wait().expect("error"),
+            own_blocks: Image::load("own_blocks.png").wait().unwrap(),
+            other_blocks: Image::load("other_blocks.png").wait().unwrap(),
+            own_bg: Image::load("own_bg.png").wait().unwrap(),
+            other_bg: Image::load("other_bg.png").wait().unwrap(),
+            ko: Image::load("ko.png").wait().unwrap(),
+            bomb: Image::load("bomb.png").wait().unwrap(),
+            bomb_small: Image::load("bomb_small.png").wait().unwrap(),
             //ui: Image::load("ui.png").wait().expect("unable to load ui.png"),
 
             mapping,
@@ -119,9 +123,9 @@ impl Game {
         }
     }
 
-    fn draw_game(&self, window: &mut Window, blocks: &[Image], field: &[u8], pos: Vector) {
-        let w = blocks[0].area().width();
-        let h = blocks[1].area().height();
+    fn draw_game(&self, window: &mut Window, blocks: &[Image], field: &[u8], size: Vector, pos: Vector) {
+        let w = size.x;
+        let h = size.y;
         for (i, &val) in field.iter().enumerate() {
             let x = i%10;
             let y = i/10;
@@ -141,9 +145,7 @@ impl Scene for Game {
     fn update(&mut self, _: &mut Window) -> Result<()> {
         self.client.update();
 
-        if self.client.started &&
-            !self.client.games[self.player_id].ko &&
-            self.client.games[self.player_id].current != 8 {
+        if self.client.in_game(self.player_id) {
             while self.last_line_drop.elapsed() >= Duration::from_millis(self.client.speed) {
                 self.last_line_drop += Duration::from_millis(self.client.speed);
                 let before = self.state;
@@ -161,7 +163,7 @@ impl Scene for Game {
     }
 
     fn event(&mut self, event: &Event, _: &mut Window) -> Result<()> {
-        if self.client.started && !self.client.games[self.player_id].ko {
+        if self.client.in_game(self.player_id) {
             match event {
                 Event::Key(Key::Left, ButtonState::Pressed) => {
                     self.state = self.client.games[self.player_id].slide_left(self.state);
@@ -181,6 +183,13 @@ impl Scene for Game {
                 },
                 Event::Key(Key::D, ButtonState::Pressed) => {
                     self.state = self.client.games[self.player_id].rotate_right(self.state);
+                },
+                Event::Key(Key::Space, ButtonState::Pressed) => {
+                    if !self.client.games[self.player_id].held {
+                        self.client.games[self.player_id].held = true;
+                        self.state = ActiveState::new();
+                        self.client.command(format!("call:hold:\"{}\"", self.player_key).as_str());
+                    }
                 },
                 _ => (),
             }
@@ -206,49 +215,60 @@ impl Scene for Game {
 
         let blocks: Vec<_> = (0..8)
             .map(|i| {
-                self.own_blocks.subimage(Rectangle::new(Vector::new(i as f32 * 16.0, 0.0),
-                                                        Vector::new(16.0, 16.0)))
+                self.own_blocks.subimage(Rectangle::new(Vector::new(i as f32 * 32.0, 0.0),
+                                                        Vector::new(32.0, 32.0)))
             })
             .collect();
 
         // render the blocks for the main game
-        self.draw_game(window,
-                       blocks.as_slice(),
-                       &self.client.games[self.player_id].field[10..],
-                       Vector::new(240.0, 20.0));
+        self.draw_game(window, blocks.as_slice(), &self.client.games[self.player_id].field[10..],
+                       Vector::new(16.0, 16.0), Vector::new(240.0, 20.0));
 
-        // render the falling tetrimino
-        if !self.client.games[self.player_id].ko {
-            self.draw_state(window,
-                            blocks.as_slice(),
-                            self.state,
-                            |img| Img(img));
-            self.draw_state(window,
-                            blocks.as_slice(),
-                            self.client.games[self.player_id].hard_drop(self.state),
-                            |img| Blended(img, Color::WHITE.with_alpha(0.3)));
+        if self.client.in_game(self.player_id) {
+            // render the falling tetrimino
+            if !self.client.games[self.player_id].ko {
+                self.draw_state(window,
+                                blocks.as_slice(),
+                                self.state,
+                                |img| Img(img));
+                self.draw_state(window,
+                                blocks.as_slice(),
+                                self.client.games[self.player_id].hard_drop(self.state),
+                                |img| Blended(img, Color::WHITE.with_alpha(0.3)));
+            }
         }
 
         let blocks: Vec<_> = (0..8)
             .map(|i| {
-                self.other_blocks.subimage(Rectangle::new(Vector::new(i as f32 * 8.0, 0.0),
-                                                          Vector::new(8.0, 8.0)))
+                self.other_blocks.subimage(Rectangle::new(Vector::new(i as f32 * 16.0, 0.0),
+                                                          Vector::new(16.0, 16.0)))
             })
             .collect();
 
-        // render the next tetriminoes
-        for i in 0..6 {
-            let id = self.client.games[self.player_id].next[i] as usize;
-            let pos = Vector::new(408.0, 24.0 + 32.0 * i as f32);
-            for y in 0..4 {
-                for x in 0..4 {
-                    let color = tetris_model::shapes::SHAPES[id][0][x+y*4] as usize;
-                    if color > 0 {
-                        let rect = Rectangle::new(Vector::new(8.0 * x as f32, 8.0 * y as f32) + pos,
-                                                  Vector::new(8.0, 8.0));
-                        window.draw(&rect, Img(&blocks[color]));
+        if self.client.in_game(self.player_id) {
+            // render the next tetriminoes
+            for i in 0..6 {
+                let id = self.client.games[self.player_id].next[i] as usize;
+                let pos = Vector::new(408.0, 24.0 + 32.0 * i as f32);
+                for y in 0..4 {
+                    for x in 0..4 {
+                        let color = tetris_model::shapes::SHAPES[id][0][x + y * 4] as usize;
+                        if color > 0 {
+                            let rect = Rectangle::new(Vector::new(8.0 * x as f32, 8.0 * y as f32) + pos,
+                                                      Vector::new(8.0, 8.0));
+                            window.draw(&rect, Img(&blocks[color]));
+                        }
                     }
                 }
+            }
+
+            // render waiting garbage
+            for (i, (_, delay)) in self.client.games[self.player_id].garbage.iter().enumerate() {
+                let rect = Rectangle::new(Vector::new(228.0, 332.0 - i as f32 * 12.0),
+                                          Vector::new(8.0, 8.0));
+                let bomb = Rectangle::new(Vector::new(16.0 * *delay as f32, 0.0),
+                                          Vector::new(16.0, 16.0));
+                window.draw(&rect, Img(&self.bomb.subimage(bomb)));
             }
         }
 
@@ -270,7 +290,17 @@ impl Scene for Game {
                     window.draw_ex(&bg, Img(&self.other_bg), Transform::IDENTITY, -1);
 
                     self.draw_game(window, blocks.as_slice(), &self.client.games[i].field[10..],
-                                   bg.pos);
+                                   Vector::new(8.0, 8.0), bg.pos);
+
+                    // render waiting garbage
+                    for (i, (_, delay)) in self.client.games[i].garbage.iter().enumerate() {
+                        let rect = Rectangle::new(Vector::new(bg.pos.x-5.0,
+                                                              bg.pos.y+bg.size.y-4.0-i as f32*5.0),
+                                                  Vector::new(4.0, 4.0));
+                        let bomb = Rectangle::new(Vector::new(8.0 * *delay as f32, 0.0),
+                                                  Vector::new(8.0, 8.0));
+                        window.draw(&rect, Img(&self.bomb_small.subimage(bomb)));
+                    }
 
                     if self.client.games[i].ko {
                         window.draw_ex(&Rectangle::new(Vector::new(16.0, 56.0) + bg.pos,

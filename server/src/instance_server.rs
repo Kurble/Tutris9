@@ -1,5 +1,7 @@
 use std::ops::{Deref, DerefMut};
 use std::net::*;
+use std::thread::sleep;
+use std::time::Duration;
 use serde::*;
 use mirror::*;
 use tetris_model::connection::Connection;
@@ -62,6 +64,8 @@ impl<T: for<'a> Reflect<'a> + Serialize> InstanceServer<T> {
         }
 
         self.connections.retain(|connection| connection.alive());
+
+        sleep(Duration::from_millis(20));
     }
 
     pub fn command(&mut self, cmd: &str) {
