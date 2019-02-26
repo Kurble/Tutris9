@@ -7,6 +7,7 @@ extern crate rand;
 
 mod client;
 mod game;
+mod menu;
 mod matchmaking;
 
 use quicksilver::{
@@ -30,9 +31,7 @@ impl State for DrawScene {
     fn new() -> Result<Self> {
         Ok(DrawScene {
             current: Box::new(
-                matchmaking::Matchmaking::new(
-                    client::Client::new("127.0.0.1:1337").unwrap()
-                )
+                menu::Menu::new()
             )
         })
     }
@@ -57,7 +56,7 @@ impl State for DrawScene {
 }
 
 fn main() {
-    run::<DrawScene>("Tetris 99 clone",
+    run::<DrawScene>("Teetoruss 9",
                      Vector::new(640, 360),
                      Settings {
                          draw_rate: 16.6666667,

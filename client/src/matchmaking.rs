@@ -55,14 +55,13 @@ impl Scene for Matchmaking {
     fn advance(&mut self) -> Option<Box<Scene>> {
         if !self.client.alive() {
             if self.client.done {
-                let client = Client::new(self.client.instance_address.as_str())
-                    .expect("Unable to connect to the instance server");
-
-                Some(Box::new(Game::new(client,
-                                        self.client.player_id,
-                                        self.client.player_key.clone())))
+                self.client.done = false;
+                Client::new(self.client.instance_address.as_str()).ok()
+                    .map(|client| Box::new(Game::new(client,
+                                                     self.client.player_id,
+                                                     self.client.player_key.clone())) as Box<_>)
             } else {
-                None
+                Some(Box::new(super::menu::Menu::new()))
             }
         } else {
             None

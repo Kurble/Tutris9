@@ -21,6 +21,7 @@ pub struct Game {
 
     state: ActiveState,
     last_line_drop: Instant,
+    return_to_menu: bool,
 
     own_blocks: Image,
     other_blocks: Image,
@@ -56,6 +57,7 @@ impl Game {
                 rotation: 0,
             },
             last_line_drop: Instant::now(),
+            return_to_menu: false,
 
             own_blocks: Image::load("own_blocks.png").wait().unwrap(),
             other_blocks: Image::load("other_blocks.png").wait().unwrap(),
@@ -193,6 +195,16 @@ impl Scene for Game {
                 },
                 _ => (),
             }
+        } else {
+            match event {
+                Event::Key(Key::Space, ButtonState::Pressed) => {
+                    if self.client.done {
+                        self.return_to_menu = true;
+                    }
+                },
+
+                _ => (),
+            }
         }
 
         Ok(())
@@ -262,6 +274,22 @@ impl Scene for Game {
                 }
             }
 
+            // render hold tetrimino
+            if self.client.games[self.player_id].hold < 8 {
+                let id = self.client.games[self.player_id].hold as usize;
+                let pos = Vector::new(204.0, 24.0);
+                for y in 0..4 {
+                    for x in 0..4 {
+                        let color = tetris_model::shapes::SHAPES[id][0][x + y * 4] as usize;
+                        if color > 0 {
+                            let rect = Rectangle::new(Vector::new(8.0 * x as f32, 8.0 * y as f32) + pos,
+                                                      Vector::new(8.0, 8.0));
+                            window.draw(&rect, Img(&blocks[color]));
+                        }
+                    }
+                }
+            }
+
             // render waiting garbage
             for (i, (_, delay)) in self.client.games[self.player_id].garbage.iter().enumerate() {
                 let rect = Rectangle::new(Vector::new(228.0, 332.0 - i as f32 * 12.0),
@@ -315,9 +343,10 @@ impl Scene for Game {
     }
 
     fn advance(&mut self) -> Option<Box<Scene>> {
-        //
-
-
-        None
+        if self.return_to_menu {
+            Some(Box::new(super::menu::Menu::new()))
+        } else {
+            None
+        }
     }
 }
