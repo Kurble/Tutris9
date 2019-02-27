@@ -9,7 +9,7 @@ use quicksilver::{
     Future,
     Result,
     geom::{Rectangle, Transform, Vector},
-    graphics::{Background, Background::Img, Background::Blended, Color, Image, View},
+    graphics::{Background, Background::Img, Background::Blended, Color, Image, View, Font, FontStyle},
     input::{Key, ButtonState},
     lifecycle::{Window},
 };
@@ -23,6 +23,11 @@ pub struct Game {
     last_line_drop: Instant,
     return_to_menu: bool,
 
+    font: Font,
+    position_style: FontStyle,
+    position: Option<(Image, usize)>,
+    result_style: FontStyle,
+    result: Option<Image>,
     own_blocks: Image,
     other_blocks: Image,
     own_bg: Image,
@@ -59,6 +64,11 @@ impl Game {
             last_line_drop: Instant::now(),
             return_to_menu: false,
 
+            font: Font::load("font.ttf").wait().unwrap(),
+            position_style: FontStyle::new(32.0, Color::WHITE),
+            result_style: FontStyle::new(160.0, Color::WHITE),
+            position: None,
+            result: None,
             own_blocks: Image::load("own_blocks.png").wait().unwrap(),
             other_blocks: Image::load("other_blocks.png").wait().unwrap(),
             own_bg: Image::load("own_bg.png").wait().unwrap(),
@@ -235,6 +245,37 @@ impl Scene for Game {
         // render the blocks for the main game
         self.draw_game(window, blocks.as_slice(), &self.client.games[self.player_id].field[10..],
                        Vector::new(16.0, 16.0), Vector::new(240.0, 20.0));
+
+        // render positions left
+        let position = self.client.games.len() - self.client.games_ko.len();
+        if self.position.as_ref().map(|(_, pos)| *pos != position).unwrap_or(true) {
+            let text = format!("{}/{}", position, self.client.games.len());
+            self.position = Some((self.font.render(text.as_str(),
+                                                   &self.position_style).unwrap(), position));
+        }
+        if let Some((image, _)) = self.position.as_ref() {
+            let size = image.area().size;
+            window.draw(&Rectangle::new(Vector::new(408.0, 340.0 - size.y), size), Img(image));
+        }
+
+        // render the result
+        if self.client.done || self.client.games[self.player_id].ko {
+            if self.result.is_none() {
+                let final_position = self.client.games_ko.iter()
+                    .enumerate()
+                    .find(|(_, e)| **e == self.player_id)
+                    .map(|(i, _)| self.client.games.len() - i)
+                    .unwrap_or(1);
+                let text = format!("{}", final_position);
+                self.result = Some(self.font.render(text.as_str(), &self.result_style).unwrap());
+            }
+
+            if let Some(result) = self.result.as_ref() {
+                let size = result.area().size;
+                window.draw(&Rectangle::new(Vector::new(320.0 - size.x * 0.25, 80.0), size * 0.5),
+                            Img(result));
+            }
+        }
 
         if self.client.in_game(self.player_id) {
             // render the falling tetrimino
