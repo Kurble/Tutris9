@@ -22,12 +22,14 @@ pub struct Game {
     state: ActiveState,
     last_line_drop: Instant,
     return_to_menu: bool,
+    game_over_since: Option<Instant>,
 
     font: Font,
     position_style: FontStyle,
     position: Option<(Image, usize)>,
     result_style: FontStyle,
     result: Option<Image>,
+    message: Image,
     own_blocks: Image,
     other_blocks: Image,
     own_bg: Image,
@@ -51,6 +53,11 @@ impl Game {
         }
         mapping.shuffle(&mut thread_rng());
 
+        let font = Font::load("font.ttf").wait().unwrap();
+        let position_style = FontStyle::new(32.0, Color::WHITE);
+        let result_style = FontStyle::new(160.0, Color::WHITE);
+        let message = font.render("Get Ready!", &result_style).unwrap();
+
         Self {
             client,
             player_id,
@@ -63,12 +70,13 @@ impl Game {
             },
             last_line_drop: Instant::now(),
             return_to_menu: false,
-
-            font: Font::load("font.ttf").wait().unwrap(),
-            position_style: FontStyle::new(32.0, Color::WHITE),
-            result_style: FontStyle::new(160.0, Color::WHITE),
+            game_over_since: None,
+            font,
+            position_style,
+            result_style,
             position: None,
             result: None,
+            message,
             own_blocks: Image::load("own_blocks.png").wait().unwrap(),
             other_blocks: Image::load("other_blocks.png").wait().unwrap(),
             own_bg: Image::load("own_bg.png").wait().unwrap(),
@@ -169,6 +177,10 @@ impl Scene for Game {
             }
         } else {
             self.last_line_drop = Instant::now();
+            if self.client.done && self.game_over_since.is_none() {
+                self.game_over_since = Some(Instant::now());
+                self.message = self.font.render("Game Over!", &self.result_style).unwrap();
+            }
         }
 
         Ok(())
@@ -206,14 +218,17 @@ impl Scene for Game {
                 _ => (),
             }
         } else {
-            match event {
-                Event::Key(Key::Space, ButtonState::Pressed) => {
-                    if self.client.done {
-                        self.return_to_menu = true;
-                    }
-                },
+            let limit = Duration::from_secs(3);
+            if self.game_over_since.as_ref().map(|t| t.elapsed() > limit).unwrap_or(false) {
+                match event {
+                    Event::Key(Key::Space, ButtonState::Pressed) => {
+                        if self.client.done {
+                            self.return_to_menu = true;
+                        }
+                    },
 
-                _ => (),
+                    _ => (),
+                }
             }
         }
 
@@ -259,8 +274,8 @@ impl Scene for Game {
         }
 
         // render the result
-        if self.client.done || self.client.games[self.player_id].ko {
-            if self.result.is_none() {
+        if !self.client.started || self.client.done || self.client.games[self.player_id].ko {
+            if self.client.started && self.result.is_none() {
                 let final_position = self.client.games_ko.iter()
                     .enumerate()
                     .find(|(_, e)| **e == self.player_id)
@@ -274,6 +289,19 @@ impl Scene for Game {
                 let size = result.area().size;
                 window.draw(&Rectangle::new(Vector::new(320.0 - size.x * 0.25, 80.0), size * 0.5),
                             Img(result));
+            }
+
+            let tick = 0.75;
+
+            if self.game_over_since
+                .map(|t| t.elapsed())
+                .map(|d| d.as_secs() as f64 + d.subsec_nanos() as f64 / 1_000_000_000.0)
+                .map(|d| d < tick * 3.0 && (d / tick).fract() < 0.5)
+                .unwrap_or(true) {
+                let size = self.message.area().size;
+                window.draw_ex(&Rectangle::new(Vector::new(320.0 - size.x * 0.25, 200.0),
+                                               size * 0.5),
+                               Img(&self.message), Transform::IDENTITY, 1);
             }
         }
 
