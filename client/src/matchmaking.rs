@@ -2,6 +2,7 @@ use super::*;
 use super::client::*;
 use super::game::Game;
 use tetris_model::matchmaking::MatchmakingState;
+use tetris_model::connection::*;
 
 use quicksilver::{
     Result,
@@ -10,14 +11,14 @@ use quicksilver::{
     lifecycle::Window,
 };
 
-pub struct Matchmaking {
-    pub client: Client<MatchmakingState>,
+pub struct Matchmaking<C: Connection> {
+    pub client: Client<MatchmakingState, C>,
     font: Font,
     timer_style: FontStyle,
 }
 
-impl Matchmaking {
-    pub fn new(client: Client<MatchmakingState>) -> Self {
+impl<C: Connection> Matchmaking<C> {
+    pub fn new(client: Client<MatchmakingState, C>) -> Self {
         Self {
             client,
 
@@ -27,7 +28,7 @@ impl Matchmaking {
     }
 }
 
-impl Scene for Matchmaking {
+impl<C: Connection> Scene for Matchmaking<C> {
     fn update(&mut self, _: &mut Window) -> Result<()> {
         self.client.update();
         Ok(())
@@ -56,7 +57,7 @@ impl Scene for Matchmaking {
         if !self.client.alive() {
             if self.client.done {
                 self.client.done = false;
-                Client::new(self.client.instance_address.as_str()).ok()
+                Client::new(make_connection(self.client.instance_address.as_str())).ok()
                     .map(|client| Box::new(Game::new(client,
                                                      self.client.player_id,
                                                      self.client.player_key.clone())) as Box<_>)

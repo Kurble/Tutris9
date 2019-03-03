@@ -1,5 +1,7 @@
 use super::*;
 
+use tetris_model::connection::*;
+
 use quicksilver::{
     Result,
     Future,
@@ -70,7 +72,7 @@ impl Scene for Menu {
     fn advance(&mut self) -> Option<Box<Scene>> {
         if self.connect {
             self.connect = false;
-            client::Client::new("127.0.0.1:1337")
+            client::Client::new(make_connection("ws://127.0.0.1:3000/instance/0"))
                 .ok()
                 .map(|client| Box::new(matchmaking::Matchmaking::new(client)) as Box<_>)
         } else {

@@ -1,23 +1,30 @@
-extern crate tetris_model;
-extern crate mirror;
-extern crate serde;
-extern crate serde_json;
-extern crate clap;
+use tetris_model::connection::*;
 
-mod instance_server;
-mod user_server;
+mod shared_server;
+mod private_server;
+mod instance;
+
+use self::instance::InstanceContainer;
 
 use std::time::{Instant, Duration};
-use std::process::Command;
-use clap::{App, Arg};
 use std::mem::replace;
+use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+
+use actix::*;
+use actix_web::server::HttpServer;
+use actix_web::{fs, ws, App, Error, HttpRequest, HttpResponse};
 
 struct Match {
     users: Vec<String>,
     wait_time: usize,
 }
 
-fn run_matchmaking_server() -> ::std::io::Result<()> {
+fn run_matchmaking_server<C>(listener: Receiver<C>,
+                             container: Arc<Mutex<InstanceContainer<C>>>) -> ::std::io::Result<()>
+    where
+        C: Connection + Send + 'static
+{
     println!("Starting matchmaking server.. ");
 
     let factory = || tetris_model::matchmaking::MatchmakingState {
@@ -30,7 +37,7 @@ fn run_matchmaking_server() -> ::std::io::Result<()> {
         wait_time: 91,
     };
 
-    let mut server = user_server::UserServer::new(factory, "0.0.0.0:1337")?;
+    let mut server = private_server::PrivateServer::new(factory, listener);
     let mut last_match = Instant::now();
 
     let mut current_match = Match {
@@ -71,21 +78,20 @@ fn run_matchmaking_server() -> ::std::io::Result<()> {
                     println!("Not enough users to start instance.. resetting wait time");
                     current_match.wait_time = 91;
                 } else {
-                    let port = 1338;
-                    let instance_address = format!("127.0.0.1:{}", port);
+                    let users = current_match.users.clone();
 
-                    let mut args = Vec::new();
-                    args.push(format!("--instance=0.0.0.0:{}", port));
-                    for user in current_match.users {
-                        args.push(format!("--user={}", user));
-                    }
+                    let new_container = container.clone();
+                    let slot = container
+                        .lock()
+                        .map(move |mut i| {
+                            let users = users;
+                            i.create(move |listener, _| {
+                                run_instance_server(listener, users).expect("matchmaker failed");
+                            }, new_container)
+                        })
+                        .expect("failed to create game instance");
 
-                    Command::new(std::env::current_exe()?)
-                        .args(args.iter())
-                        .spawn()
-                        .expect("Failed to start instance. Server is broken.");
-
-                    ::std::thread::sleep(Duration::from_millis(100));
+                    let instance_address = format!("ws://127.0.0.1:3000/instance/{}", slot);
 
                     let commands = [
                         format!("instance_address/set:\"{}\"", instance_address),
@@ -111,12 +117,15 @@ fn run_matchmaking_server() -> ::std::io::Result<()> {
     }
 }
 
-fn run_instance_server(address: String, users: Vec<String>) -> std::io::Result<()> {
+fn run_instance_server<C>(listener: Receiver<C>,
+                          users: Vec<String>) -> std::io::Result<()> where
+    C: Connection
+{
     let instance = tetris_model::instance::InstanceState::new(users);
 
-    let mut server = instance_server::InstanceServer::new(instance, address.as_str()).unwrap();
+    let mut server = shared_server::SharedServer::new(instance, listener);
 
-    println!("instance started on {}", address);
+    println!("instance started");
     loop {
         server.update();
         server.server_update();
@@ -133,41 +142,127 @@ fn run_instance_server(address: String, users: Vec<String>) -> std::io::Result<(
             break;
         }
     }
-    println!("instance terminating on {}", address);
+    println!("instance terminating");
 
     Ok(())
 }
 
-fn main() {
-    let app = App::new("Tetris 99 clone server")
-        .version("1.0")
-        .author("Bram Buurlage. <brambuurlage@gmail.com>")
-        .arg(Arg::with_name("instance")
-            .short("i")
-            .long("instance")
-            .value_name("INSTANCE")
-            .help("Runs an instance server on the specified address")
-            .takes_value(true))
-        .arg(Arg::with_name("user")
-            .short("u")
-            .long("user")
-            .multiple(true)
-            .takes_value(true)
-            .number_of_values(1)
-            .requires("instance")
-            .help("Adds a user the instance should expect"));
+#[derive(Message)]
+struct WsMessage(pub String);
 
-    let matches = app.get_matches();
+#[derive(Message)]
+struct WsClose;
 
-    if matches.is_present("instance") {
-        run_instance_server(matches.value_of("instance").unwrap().into(),
-                            matches.values_of("user")
-                                .unwrap()
-                                .map(|u| String::from(u))
-                                .collect())
-            .expect("Error when running instance server.. exiting");
-    } else {
-        run_matchmaking_server()
-            .expect("Error when running matchmaking server.. restarting");
+struct WsServerState {
+    instances: Arc<Mutex<instance::InstanceContainer<WsConnection>>>,
+}
+
+struct Ws { id: usize, tx: Option<SyncSender<String>> }
+
+struct WsConnection {
+    rx: Receiver<String>,
+    addr: Addr<Ws>,
+    alive: bool,
+}
+
+impl Actor for Ws {
+    type Context = ws::WebsocketContext<Self, WsServerState>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        let (tx, rx) = sync_channel(8);
+        let addr = ctx.address();
+        if ctx.state().instances.lock().unwrap().submit(self.id, WsConnection {
+            rx,
+            addr,
+            alive: true,
+        }).is_err() {
+            println!("Unable to forward to instance {}", self.id);
+            ctx.stop();
+        }
+
+        self.tx = Some(tx);
     }
+}
+
+impl Handler<WsMessage> for Ws {
+    type Result = ();
+
+    fn handle(&mut self, msg: WsMessage, ctx: &mut Self::Context) {
+        ctx.text(msg.0);
+    }
+}
+
+impl Handler<WsClose> for Ws {
+    type Result = ();
+
+    fn handle(&mut self, _: WsClose, ctx: &mut Self::Context) {
+        ctx.stop();
+    }
+}
+
+impl StreamHandler<ws::Message, ws::ProtocolError> for Ws {
+    fn handle(&mut self, msg: ws::Message, ctx: &mut Self::Context) {
+        match msg {
+            ws::Message::Ping(msg) => {
+                ctx.pong(&msg);
+            },
+            ws::Message::Pong(_) => {
+                //
+            },
+            ws::Message::Text(text) => {
+                self.tx.as_ref().unwrap().send(text).unwrap();
+            },
+            ws::Message::Binary(_) |
+            ws::Message::Close(_) => {
+                ctx.stop();
+            },
+        }
+    }
+}
+
+impl Connection for WsConnection {
+    fn close(&mut self) {
+        if self.alive {
+            self.addr.do_send(WsClose);
+        }
+        self.alive = false;
+    }
+
+    fn alive(&self) -> bool {
+        self.alive
+    }
+
+    fn send(&mut self, message: &str) {
+        self.addr.do_send(WsMessage(message.to_string()));
+    }
+
+    fn message(&mut self) -> Option<String> {
+        self.rx.try_iter().next()
+    }
+}
+
+fn instance_route(req: &HttpRequest<WsServerState>) -> Result<HttpResponse, Error> {
+    if let Ok(id) = req.path().split_at("/instance/".len()).1.parse::<usize>() {
+        return ws::start(req, Ws { id, tx: None });
+    } else {
+        Ok(HttpResponse::BadRequest().finish())
+    }
+}
+
+fn main() {
+    let sys = actix::System::new("tetris9");
+
+    let instances = Arc::new(Mutex::new(instance::InstanceContainer::new()));
+
+    instances.lock().unwrap().create(|listener, container| {
+        run_matchmaking_server(listener, container).expect("matchmaker failed");
+    }, instances.clone());
+
+    HttpServer::new(move || {
+        App::with_state(WsServerState { instances: instances.clone() })
+            .resource("/instance/{id}", |r| r.f(instance_route))
+            .handler("/static/", fs::StaticFiles::new("static/").unwrap())
+    }).bind("127.0.0.1:3000").unwrap().start();
+
+    let _ = sys.run();
 }

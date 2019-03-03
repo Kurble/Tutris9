@@ -1,16 +1,15 @@
 use std::ops::{Deref, DerefMut};
-use std::net::*;
 use std::str::FromStr;
 use mirror::*;
 use serde_json::{Value, from_value};
-use tetris_model::connection::Connection;
+use tetris_model::connection::*;
 
-pub struct Client<T: for<'a> Reflect<'a>> {
+pub struct Client<T: for<'a> Reflect<'a>, C: Connection> {
     value: T,
-    connection: Connection,
+    connection: C,
 }
 
-impl<T: for<'a> Reflect<'a>> Deref for Client<T> {
+impl<T: for<'a> Reflect<'a>, C: Connection> Deref for Client<T, C> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -18,18 +17,16 @@ impl<T: for<'a> Reflect<'a>> Deref for Client<T> {
     }
 }
 
-impl<T: for<'a> Reflect<'a>> DerefMut for Client<T> {
+impl<T: for<'a> Reflect<'a>, C: Connection> DerefMut for Client<T, C> {
     fn deref_mut(&mut self) -> &mut T {
         &mut self.value
     }
 }
 
-impl<T: for<'a> Reflect<'a>> Client<T> {
-    pub fn new(server: &str) -> ::std::io::Result<Self> {
-        let mut connection = Connection::new(TcpStream::connect(server)?)?;
-
+impl<T: for<'a> Reflect<'a>, C: Connection> Client<T, C> {
+    pub fn new(mut connection: C) -> ::std::io::Result<Self> {
         loop {
-            if let Some(message) = connection.messages().next() {
+            if let Some(message) = connection.message() {
                 let value: Value = Value::from_str(message.as_str()).unwrap();
                 let value: T = from_value(value).unwrap();
 
@@ -49,7 +46,7 @@ impl<T: for<'a> Reflect<'a>> Client<T> {
 
     pub fn update(&mut self) {
         if self.connection.alive() {
-            for message in self.connection.messages() {
+            for message in Messages::new(&mut self.connection) {
                 self.value.command_str(message.as_str()).expect("Invalid message received");
             }
         }

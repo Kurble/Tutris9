@@ -1,6 +1,7 @@
 use super::*;
 use super::client::Client;
 use tetris_model::instance::*;
+use tetris_model::connection::*;
 use std::time::{Instant, Duration};
 use rand::thread_rng;
 use rand::seq::SliceRandom;
@@ -14,8 +15,8 @@ use quicksilver::{
     lifecycle::{Window},
 };
 
-pub struct Game {
-    client: Client<InstanceState>,
+pub struct Game<C: Connection> {
+    client: Client<InstanceState, C>,
     player_id: usize,
     player_key: String,
 
@@ -42,8 +43,8 @@ pub struct Game {
     mapping: [usize; 8],
 }
 
-impl Game {
-    pub fn new(mut client: Client<InstanceState>, player_id: usize, player_key: String) -> Self {
+impl<C: Connection> Game<C> {
+    pub fn new(mut client: Client<InstanceState, C>, player_id: usize, player_key: String) -> Self {
         client.command(format!("call:login:\"{}\"", player_key).as_str());
 
         let mut mapping = [0; 8];
@@ -161,7 +162,7 @@ impl Game {
     }
 }
 
-impl Scene for Game {
+impl<C: Connection> Scene for Game<C> {
     fn update(&mut self, _: &mut Window) -> Result<()> {
         self.client.update();
 

@@ -10,3 +10,4 @@ serde_json = "1"
 mirror = { path = "../../mirror" }
 byteorder = "1"
 rand = "0.6"
+websocket = { version = "0.22.3", default-features=false, features = ["sync"] }
