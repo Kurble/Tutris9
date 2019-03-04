@@ -1,8 +1,9 @@
 use super::*;
-use super::client::Client;
+use super::client::*;
+use super::util::*;
 use tetris_model::instance::*;
 use tetris_model::connection::*;
-use std::time::{Instant, Duration};
+use std::time::Duration;
 use rand::thread_rng;
 use rand::seq::SliceRandom;
 
@@ -21,9 +22,9 @@ pub struct Game<C: Connection> {
     player_key: String,
 
     state: ActiveState,
-    last_line_drop: Instant,
+    last_line_drop: Duration,
     return_to_menu: bool,
-    game_over_since: Option<Instant>,
+    game_over_duration: Option<Duration>,
 
     font: Font,
     position_style: FontStyle,
@@ -43,52 +44,67 @@ pub struct Game<C: Connection> {
     mapping: [usize; 8],
 }
 
-impl<C: Connection> Game<C> {
-    pub fn new(mut client: Client<InstanceState, C>, player_id: usize, player_key: String) -> Self {
-        client.command(format!("call:login:\"{}\"", player_key).as_str());
+impl<C: Connection + 'static> Game<C> {
+    pub fn new(client: ConnectClient<InstanceState, C>, player_id: usize, player_key: String)
+        -> Box<Future<Item=Box<Scene>, Error=quicksilver::Error>> {
 
-        let mut mapping = [0; 8];
-        let mut mapping_i = (0..9).filter(|&i| i != player_id);
-        for i in mapping.iter_mut() {
-            *i = mapping_i.next().unwrap();
-        }
-        mapping.shuffle(&mut thread_rng());
+        let font = Font::load("font.ttf");
+        let own_blocks = Image::load("own_blocks.png");
+        let other_blocks = Image::load("other_blocks.png");
+        let own_bg = Image::load("own_bg.png");
+        let other_bg = Image::load("other_bg.png");
+        let ko = Image::load("ko.png");
+        let bomb = Image::load("bomb.png");
+        let bomb_small = Image::load("bomb_small.png");
+        //let ui = Image::load("ui.png");
 
-        let font = Font::load("font.ttf").wait().unwrap();
-        let position_style = FontStyle::new(32.0, Color::WHITE);
-        let result_style = FontStyle::new(160.0, Color::WHITE);
-        let message = font.render("Get Ready!", &result_style).unwrap();
+        Box::new(client.join(font.join(own_blocks.join(other_blocks.join(own_bg.join(other_bg.join(ko.join(bomb.join(bomb_small))))))))
+            .map(move |(mut client, (font, (own_blocks, (other_blocks, (own_bg, (other_bg, (ko, (bomb, bomb_small))))))))| {
+                client.command(format!("call:login:\"{}\"", player_key).as_str());
 
-        Self {
-            client,
-            player_id,
-            player_key,
+                let mut mapping = [0; 8];
+                let mut mapping_i = (0..9).filter(|&i| i != player_id);
+                for i in mapping.iter_mut() {
+                    *i = mapping_i.next().unwrap();
+                }
+                mapping.shuffle(&mut thread_rng());
 
-            state: ActiveState {
-                x: 2,
-                y: -4,
-                rotation: 0,
-            },
-            last_line_drop: Instant::now(),
-            return_to_menu: false,
-            game_over_since: None,
-            font,
-            position_style,
-            result_style,
-            position: None,
-            result: None,
-            message,
-            own_blocks: Image::load("own_blocks.png").wait().unwrap(),
-            other_blocks: Image::load("other_blocks.png").wait().unwrap(),
-            own_bg: Image::load("own_bg.png").wait().unwrap(),
-            other_bg: Image::load("other_bg.png").wait().unwrap(),
-            ko: Image::load("ko.png").wait().unwrap(),
-            bomb: Image::load("bomb.png").wait().unwrap(),
-            bomb_small: Image::load("bomb_small.png").wait().unwrap(),
-            //ui: Image::load("ui.png").wait().expect("unable to load ui.png"),
 
-            mapping,
-        }
+                let position_style = FontStyle::new(32.0, Color::WHITE);
+                let result_style = FontStyle::new(160.0, Color::WHITE);
+                let message = font.render("Get Ready!", &result_style).unwrap();
+
+                Box::new(Self {
+                    client,
+                    player_id,
+                    player_key,
+
+                    state: ActiveState {
+                        x: 2,
+                        y: -4,
+                        rotation: 0,
+                    },
+                    last_line_drop: Duration::from_secs(0),
+                    return_to_menu: false,
+                    game_over_duration: None,
+                    font,
+                    position_style,
+                    result_style,
+                    position: None,
+                    result: None,
+                    message,
+                    own_blocks,
+                    other_blocks,
+                    own_bg,
+                    other_bg,
+                    ko,
+                    bomb,
+                    bomb_small,
+                    //ui,
+
+                    mapping,
+                }) as Box<Scene>
+            }))
     }
 
     fn drop(&mut self) {
@@ -162,13 +178,16 @@ impl<C: Connection> Game<C> {
     }
 }
 
-impl<C: Connection> Scene for Game<C> {
-    fn update(&mut self, _: &mut Window) -> Result<()> {
+impl<C: Connection + 'static> Scene for Game<C> {
+    fn update(&mut self, window: &mut Window) -> Result<()> {
         self.client.update();
 
+        add_seconds(&mut self.last_line_drop, window.update_rate() / 1000.0);
+        self.game_over_duration.as_mut().map(|go| add_seconds(go, window.update_rate() / 1000.0));
+
         if self.client.in_game(self.player_id) {
-            while self.last_line_drop.elapsed() >= Duration::from_millis(self.client.speed) {
-                self.last_line_drop += Duration::from_millis(self.client.speed);
+            while self.last_line_drop >= Duration::from_millis(self.client.speed) {
+                self.last_line_drop -= Duration::from_millis(self.client.speed);
                 let before = self.state;
                 self.state = self.client.games[self.player_id].slide_down(self.state);
 
@@ -177,9 +196,9 @@ impl<C: Connection> Scene for Game<C> {
                 }
             }
         } else {
-            self.last_line_drop = Instant::now();
-            if self.client.done && self.game_over_since.is_none() {
-                self.game_over_since = Some(Instant::now());
+            self.last_line_drop = Duration::from_secs(0);
+            if self.client.done && self.game_over_duration.is_none() {
+                self.game_over_duration = Some(Duration::from_secs(0));
                 self.message = self.font.render("Game Over!", &self.result_style).unwrap();
             }
         }
@@ -220,7 +239,7 @@ impl<C: Connection> Scene for Game<C> {
             }
         } else {
             let limit = Duration::from_secs(3);
-            if self.game_over_since.as_ref().map(|t| t.elapsed() > limit).unwrap_or(false) {
+            if self.game_over_duration.as_ref().map(|&t| t > limit).unwrap_or(false) {
                 match event {
                     Event::Key(Key::Space, ButtonState::Pressed) => {
                         if self.client.done {
@@ -294,8 +313,7 @@ impl<C: Connection> Scene for Game<C> {
 
             let tick = 0.75;
 
-            if self.game_over_since
-                .map(|t| t.elapsed())
+            if self.game_over_duration
                 .map(|d| d.as_secs() as f64 + d.subsec_nanos() as f64 / 1_000_000_000.0)
                 .map(|d| d < tick * 3.0 && (d / tick).fract() < 0.5)
                 .unwrap_or(true) {
@@ -412,9 +430,9 @@ impl<C: Connection> Scene for Game<C> {
         Ok(())
     }
 
-    fn advance(&mut self) -> Option<Box<Scene>> {
+    fn advance(&mut self) -> Option<Box<Future<Item=Box<Scene>, Error=quicksilver::Error>>> {
         if self.return_to_menu {
-            Some(Box::new(super::menu::Menu::new()))
+            Some(super::menu::Menu::new())
         } else {
             None
         }

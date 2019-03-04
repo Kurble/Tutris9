@@ -10,10 +10,12 @@ use std::time::{Instant, Duration};
 use std::mem::replace;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::str::FromStr;
 
 use actix::*;
 use actix_web::server::HttpServer;
-use actix_web::{fs, ws, App, Error, HttpRequest, HttpResponse};
+use actix_web::{ws, http, App, Error, HttpRequest, HttpResponse};
+use actix_web::fs::NamedFile;
 
 struct Match {
     users: Vec<String>,
@@ -91,7 +93,7 @@ fn run_matchmaking_server<C>(listener: Receiver<C>,
                         })
                         .expect("failed to create game instance");
 
-                    let instance_address = format!("ws://127.0.0.1:3000/instance/{}", slot);
+                    let instance_address = format!("{}", slot);
 
                     let commands = [
                         format!("instance_address/set:\"{}\"", instance_address),
@@ -196,6 +198,7 @@ impl Handler<WsClose> for Ws {
     type Result = ();
 
     fn handle(&mut self, _: WsClose, ctx: &mut Self::Context) {
+        ctx.close(None);
         ctx.stop();
     }
 }
@@ -260,8 +263,26 @@ fn main() {
 
     HttpServer::new(move || {
         App::with_state(WsServerState { instances: instances.clone() })
+            .handler("/static/", |req: &HttpRequest<WsServerState>| -> Result<NamedFile, Error> {
+                let path = req.path().trim_start_matches("/");
+                let file = if path.ends_with(".wasm") {
+                    let mime = FromStr::from_str("application/wasm").unwrap();
+                    NamedFile::open(path)
+                        .map_err(|io| Error::from(io))
+                        .map(|f| f.set_content_type(mime))
+                } else {
+                    NamedFile::open(path)
+                        .map_err(|io| Error::from(io))
+                };
+
+                file
+            })
+            .resource("/", |r| r.method(http::Method::GET).f(|_| {
+                HttpResponse::Found()
+                    .header("LOCATION", "/static/index.html")
+                    .finish()
+            }))
             .resource("/instance/{id}", |r| r.f(instance_route))
-            .handler("/static/", fs::StaticFiles::new("static/").unwrap())
     }).bind("127.0.0.1:3000").unwrap().start();
 
     let _ = sys.run();

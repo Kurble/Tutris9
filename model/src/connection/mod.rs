@@ -1,7 +1,3 @@
-mod ws;
-
-pub use self::ws::*;
-
 pub trait Connection {
     fn close(&mut self);
     fn alive(&self) -> bool;
@@ -24,9 +20,19 @@ impl<'a, C: Connection> Iterator for Messages<'a, C> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+mod ws;
+#[cfg(not(target_arch = "wasm32"))]
 pub fn make_connection(uri: &str) -> impl Connection {
-    WsConnection::new(websocket::sync::client::ClientBuilder::new(uri)
+    self::ws::WsConnection::new(websocket::sync::client::ClientBuilder::new(uri)
         .unwrap()
         .connect_insecure()
         .unwrap())
+}
+
+#[cfg(target_arch = "wasm32")]
+mod stdws;
+#[cfg(target_arch = "wasm32")]
+pub fn make_connection(uri: &str) -> impl Connection {
+    self::stdws::WsConnection::new(uri)
 }

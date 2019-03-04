@@ -4,10 +4,10 @@ use tetris_model::connection::*;
 
 use quicksilver::{
     Result,
-    Future,
     graphics::{Background::Img, Color, Font, FontStyle, Image},
     input::{Key, ButtonState},
     lifecycle::Window,
+    combinators::Future,
 };
 
 pub struct Menu {
@@ -17,24 +17,26 @@ pub struct Menu {
 }
 
 impl Menu {
-    pub fn new() -> Self {
-        let font = Font::load("font.ttf").wait().expect("unable to load font");
-        let button_style = FontStyle::new(48.0, Color::WHITE);
+    pub fn new() -> Box<Future<Item=Box<Scene>, Error=quicksilver::Error>> {
+        let font = Font::load("font.ttf");
 
-        let play = font.render("Enter game (space)", &button_style).unwrap();
-        let exit = font.render("Exit (f4)", &button_style).unwrap();
+        Box::new(font.map(|font| {
+            let button_style = FontStyle::new(48.0, Color::WHITE);
 
-        Self {
-            play,
-            exit,
-            connect: false,
-        }
+            let play = font.render("Enter game (space)", &button_style).unwrap();
+            let exit = font.render("Exit (f4)", &button_style).unwrap();
+
+            Box::new(Self {
+                play,
+                exit,
+                connect: false,
+            }) as Box<Scene>
+        }))
     }
 }
 
 impl Scene for Menu {
     fn update(&mut self, _: &mut Window) -> Result<()> {
-        //
         Ok(())
     }
 
@@ -69,12 +71,13 @@ impl Scene for Menu {
         Ok(())
     }
 
-    fn advance(&mut self) -> Option<Box<Scene>> {
+    fn advance(&mut self) -> Option<Box<Future<Item=Box<Scene>, Error=quicksilver::Error>>> {
         if self.connect {
             self.connect = false;
-            client::Client::new(make_connection("ws://127.0.0.1:3000/instance/0"))
-                .ok()
-                .map(|client| Box::new(matchmaking::Matchmaking::new(client)) as Box<_>)
+
+            let address = format!("ws://{}/instance/0", util::get_host());
+            let client = client::Client::new(make_connection(address.as_str()));
+            Some(matchmaking::Matchmaking::new(client))
         } else {
             None
         }

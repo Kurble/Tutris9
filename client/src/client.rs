@@ -1,12 +1,19 @@
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
+use std::marker::PhantomData;
 use mirror::*;
 use serde_json::{Value, from_value};
 use tetris_model::connection::*;
+use futures::{Future, Poll, Async};
 
 pub struct Client<T: for<'a> Reflect<'a>, C: Connection> {
     value: T,
     connection: C,
+}
+
+pub struct ConnectClient<T: for<'a> Reflect<'a>, C: Connection> {
+    connection: Option<C>,
+    ph: PhantomData<T>,
 }
 
 impl<T: for<'a> Reflect<'a>, C: Connection> Deref for Client<T, C> {
@@ -23,21 +30,30 @@ impl<T: for<'a> Reflect<'a>, C: Connection> DerefMut for Client<T, C> {
     }
 }
 
-impl<T: for<'a> Reflect<'a>, C: Connection> Client<T, C> {
-    pub fn new(mut connection: C) -> ::std::io::Result<Self> {
-        loop {
-            if let Some(message) = connection.message() {
-                let value: Value = Value::from_str(message.as_str()).unwrap();
-                let value: T = from_value(value).unwrap();
+impl<T: for<'a> Reflect<'a>, C: Connection> Future for ConnectClient<T, C> {
+    type Item = Client<T, C>;
+    type Error = quicksilver::Error;
 
-                return Ok(Self {
-                    value,
-                    connection,
-                })
-            }
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        if let Some(message) = self.connection.as_mut().unwrap().message() {
+            let value: Value = Value::from_str(message.as_str()).unwrap();
+            let value: T = from_value(value).unwrap();
 
-            // oh boy...
+            Ok(Async::Ready(Client {
+                value,
+                connection: self.connection.take().unwrap(),
+            }))
+        } else if self.connection.as_ref().unwrap().alive() {
+            Ok(Async::NotReady)
+        } else {
+            Err(quicksilver::Error::IOError(::std::io::ErrorKind::ConnectionAborted.into()))
         }
+    }
+}
+
+impl<T: for<'a> Reflect<'a>, C: Connection> Client<T, C> {
+    pub fn new(connection: C) -> ConnectClient<T, C> {
+        ConnectClient { connection: Some(connection), ph: PhantomData }
     }
 
     pub fn alive(&self) -> bool {
@@ -45,10 +61,8 @@ impl<T: for<'a> Reflect<'a>, C: Connection> Client<T, C> {
     }
 
     pub fn update(&mut self) {
-        if self.connection.alive() {
-            for message in Messages::new(&mut self.connection) {
-                self.value.command_str(message.as_str()).expect("Invalid message received");
-            }
+        for message in Messages::new(&mut self.connection) {
+            self.value.command_str(message.as_str()).expect("Invalid message received");
         }
     }
 

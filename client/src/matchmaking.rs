@@ -17,14 +17,17 @@ pub struct Matchmaking<C: Connection> {
     timer_style: FontStyle,
 }
 
-impl<C: Connection> Matchmaking<C> {
-    pub fn new(client: Client<MatchmakingState, C>) -> Self {
-        Self {
-            client,
+impl<C: Connection + 'static> Matchmaking<C> {
+    pub fn new(client: ConnectClient<MatchmakingState, C>) -> Box<Future<Item=Box<Scene>, Error=quicksilver::Error>> {
+        let font = Font::load("font.ttf");
 
-            font: Font::load("font.ttf").wait().expect("unable to load font"),
-            timer_style: FontStyle::new(48.0, Color::WHITE),
-        }
+        Box::new(client.join(font).map(move |(client, font)| {
+            Box::new(Self {
+                client,
+                font,
+                timer_style: FontStyle::new(48.0, Color::WHITE),
+            }) as Box<Scene>
+        }))
     }
 }
 
@@ -53,17 +56,18 @@ impl<C: Connection> Scene for Matchmaking<C> {
         Ok(())
     }
 
-    fn advance(&mut self) -> Option<Box<Scene>> {
-        if !self.client.alive() {
-            if self.client.done {
-                self.client.done = false;
-                Client::new(make_connection(self.client.instance_address.as_str())).ok()
-                    .map(|client| Box::new(Game::new(client,
-                                                     self.client.player_id,
-                                                     self.client.player_key.clone())) as Box<_>)
-            } else {
-                Some(Box::new(super::menu::Menu::new()))
-            }
+    fn advance(&mut self) -> Option<Box<Future<Item=Box<Scene>, Error=quicksilver::Error>>> {
+        if self.client.done {
+            self.client.done = false;
+            let address = format!("ws://{}/instance/{}", util::get_host(),
+                                  self.client.instance_address);
+            let client = Client::new(make_connection(address.as_str()));
+
+            Some(Game::new(client,
+                           self.client.player_id,
+                           self.client.player_key.clone()))
+        } else if !self.client.alive() {
+            Some(super::menu::Menu::new())
         } else {
             None
         }
