@@ -1640,8 +1640,8 @@ dependencies = [
 name = "mirror"
 version = "0.1.0"
 dependencies = [
+ "futures 0.1.25 (registry+https://github.com/rust-lang/crates.io-index)",
  "mirror-derive 0.1.0",
- "regex 1.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.89 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json 1.0.39 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -2755,7 +2755,9 @@ version = "0.1.0"
 dependencies = [
  "actix 0.7.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "actix-web 0.7.18 (registry+https://github.com/rust-lang/crates.io-index)",
+ "clap 2.20.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "mirror 0.1.0",
+ "rand 0.6.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.89 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json 1.0.39 (registry+https://github.com/rust-lang/crates.io-index)",
  "tetris_model 0.1.0",

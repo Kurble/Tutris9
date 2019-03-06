@@ -9,13 +9,18 @@ use self::instance::InstanceContainer;
 use std::time::{Instant, Duration};
 use std::mem::replace;
 use std::sync::{Arc, Mutex};
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel, TryRecvError};
 use std::str::FromStr;
 
 use actix::*;
 use actix_web::server::HttpServer;
 use actix_web::{ws, http, App, Error, HttpRequest, HttpResponse};
 use actix_web::fs::NamedFile;
+
+use rand::random;
+
+use clap::App as ClapApp;
+use clap::Arg;
 
 struct Match {
     users: Vec<String>,
@@ -27,8 +32,6 @@ fn run_matchmaking_server<C>(listener: Receiver<C>,
     where
         C: Connection + Send + 'static
 {
-    println!("Starting matchmaking server.. ");
-
     let factory = || tetris_model::matchmaking::MatchmakingState {
         done: false,
         matched: false,
@@ -47,8 +50,6 @@ fn run_matchmaking_server<C>(listener: Receiver<C>,
         wait_time: 4,
     };
 
-    println!("Startup complete, entering main loop");
-
     loop {
         server.update();
 
@@ -58,13 +59,16 @@ fn run_matchmaking_server<C>(listener: Receiver<C>,
 
             current_match.wait_time -= 1;
 
+            current_match.users.retain(|user_key| {
+                server.users().find(|user| user.player_key.as_str() == user_key).is_some()
+            });
+
             // try to fill the current match
             for user in server.users() {
                 if user.matched == false && current_match.users.len() < 9 {
-                    let key = format!("player_key_afcb8f7acaf7f6_{}", current_match.users.len());
+                    let key = format!("{:x}-{:x}", random::<u64>(), random::<u64>());
 
                     user.command("matched/set:true");
-                    user.command(format!("player_id/set:{}", current_match.users.len()).as_str());
                     user.command(format!("player_key/set:\"{}\"", key).as_str());
 
                     current_match.users.push(key);
@@ -77,29 +81,36 @@ fn run_matchmaking_server<C>(listener: Receiver<C>,
 
             if current_match.wait_time == 0 {
                 if current_match.users.len() < 2 {
-                    println!("Not enough users to start instance.. resetting wait time");
                     current_match.wait_time = 91;
                 } else {
                     let users = current_match.users.clone();
 
-                    let new_container = container.clone();
+                    // make sure everyone has the correct player id
+                    for user in server.users() {
+                        if let Some(id) = users.iter().enumerate()
+                            .find(|(_, u)| u.as_str() == user.player_key)
+                            .map(|(i, _)| i) {
+                            user.command(format!("player_id/set:{}", id).as_str());
+                        }
+                    }
+
+                    // create a new instance server to host the match
+                    let c = container.clone();
                     let slot = container
                         .lock()
                         .map(move |mut i| {
                             let users = users;
                             i.create(move |listener, _| {
                                 run_instance_server(listener, users).expect("matchmaker failed");
-                            }, new_container)
+                            }, c)
                         })
                         .expect("failed to create game instance");
 
-                    let instance_address = format!("{}", slot);
-
+                    // report the existence of the new host to the users that should connect to it.
                     let commands = [
-                        format!("instance_address/set:\"{}\"", instance_address),
+                        format!("instance_address/set:\"{}\"", slot),
                         format!("done/set:true"),
                     ];
-
                     for user in server.users() {
                         if user.matched {
                             for command in commands.iter() {
@@ -109,6 +120,7 @@ fn run_matchmaking_server<C>(listener: Receiver<C>,
                         }
                     }
 
+                    // reset matchmaking
                     current_match = Match {
                         users: Vec::new(),
                         wait_time: 91,
@@ -159,7 +171,7 @@ struct WsServerState {
     instances: Arc<Mutex<instance::InstanceContainer<WsConnection>>>,
 }
 
-struct Ws { id: usize, tx: Option<SyncSender<String>> }
+struct Ws { id: usize, addr: String, tx: Option<SyncSender<String>> }
 
 struct WsConnection {
     rx: Receiver<String>,
@@ -178,7 +190,7 @@ impl Actor for Ws {
             addr,
             alive: true,
         }).is_err() {
-            println!("Unable to forward to instance {}", self.id);
+            println!("Unable to forward {} to instance {}", self.addr, self.id);
             ctx.stop();
         }
 
@@ -221,6 +233,11 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for Ws {
             },
         }
     }
+
+    fn error(&mut self, _err: ws::ProtocolError, _ctx: &mut Self::Context) -> Running {
+        println!("Client {} disconnected unexpectedly", self.addr);
+        Running::Stop
+    }
 }
 
 impl Connection for WsConnection {
@@ -240,20 +257,43 @@ impl Connection for WsConnection {
     }
 
     fn message(&mut self) -> Option<String> {
-        self.rx.try_iter().next()
+        match self.rx.try_recv() {
+            Ok(result) => Some(result),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                self.alive = false;
+                None
+            },
+        }
     }
 }
 
 fn instance_route(req: &HttpRequest<WsServerState>) -> Result<HttpResponse, Error> {
     if let Ok(id) = req.path().split_at("/instance/".len()).1.parse::<usize>() {
-        return ws::start(req, Ws { id, tx: None });
+        let addr = req.connection_info().remote().unwrap_or("<unknown>").to_string();
+        return ws::start(req, Ws { id, addr, tx: None });
     } else {
         Ok(HttpResponse::BadRequest().finish())
     }
 }
 
 fn main() {
-    let sys = actix::System::new("tetris9");
+    let matches = ClapApp::new("tutris-server")
+        .arg(Arg::with_name("bind-to")
+            .short("b")
+            .long("bind-to")
+            .help("The address to bind the sever to")
+            .default_value("127.0.0.1:3000")
+            .takes_value(true)
+            .required(true))
+        .get_matches();
+
+    let bind = matches.value_of("bind-to").unwrap_or("127.0.0.1:3000".into());
+
+    println!("Tutris-9 server starting..");
+    println!("Server will listen on {}", bind);
+
+    let sys = actix::System::new("Tutris 9");
 
     let instances = Arc::new(Mutex::new(instance::InstanceContainer::new()));
 
@@ -283,7 +323,9 @@ fn main() {
                     .finish()
             }))
             .resource("/instance/{id}", |r| r.f(instance_route))
-    }).bind("127.0.0.1:3000").unwrap().start();
+    }).bind(bind).unwrap().start();
+
+    println!("Server systems started");
 
     let _ = sys.run();
 }

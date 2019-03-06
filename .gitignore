@@ -1,4 +1,5 @@
 target/
+deploy/
 .idea
 **/*.rs.bk
 .DS_Store

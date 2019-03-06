@@ -54,7 +54,8 @@ impl Connection for WsConnection {
     }
 
     fn send(&mut self, message: &str) {
-        self.inner.borrow().socket.send_text(message);
+        let ok = self.inner.borrow().socket.send_text(message).is_ok();
+        self.inner.borrow_mut().alive &= ok;
     }
 
     fn message(&mut self) -> Option<String> {
