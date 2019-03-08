@@ -12,4 +12,9 @@ quicksilver = "0.3.7"
 mirror = { git = "https://github.com/Kurble/mirror.git" }
 rand = "0.6"
 futures = "0.1.25"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+websocket = { version = "0.22.3", default-features=false, features = ["sync"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
 stdweb = "0.4.12"

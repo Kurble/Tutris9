@@ -1,8 +1,8 @@
-mod client;
 mod game;
 mod menu;
 mod matchmaking;
 mod util;
+mod connection;
 
 use quicksilver::{
     Result,

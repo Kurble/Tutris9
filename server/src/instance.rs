@@ -2,18 +2,19 @@ use std::thread::*;
 use std::io::{Error, ErrorKind};
 use std::sync::{Arc, Weak, Mutex};
 use std::sync::mpsc::{SyncSender, Receiver, sync_channel};
-use tetris_model::connection::Connection;
 
-pub struct Instance<C: Connection + Send + 'static> {
+use mirror::Remote;
+
+pub struct Instance<R: Remote + Send + 'static> {
     control: Weak<usize>,
-    sender: SyncSender<C>,
+    sender: SyncSender<R>,
 }
 
-pub struct InstanceContainer<C: Connection + Send + 'static> {
-    instances: Vec<Instance<C>>,
+pub struct InstanceContainer<R: Remote + Send + 'static> {
+    instances: Vec<Instance<R>>,
 }
 
-impl<C: Connection + Send + 'static> InstanceContainer<C> {
+impl<R: Remote + Send + 'static> InstanceContainer<R> {
     pub fn new() -> Self {
         Self {
             instances: Vec::new(),
@@ -21,7 +22,7 @@ impl<C: Connection + Send + 'static> InstanceContainer<C> {
     }
 
     pub fn create<F>(&mut self, f: F, c: Arc<Mutex<Self>>) -> usize where
-        F: FnOnce(Receiver<C>, Arc<Mutex<Self>>) + Send + 'static
+        F: FnOnce(Receiver<R>, Arc<Mutex<Self>>) + Send + 'static
     {
         let id = self.instances
             .iter()
@@ -51,10 +52,10 @@ impl<C: Connection + Send + 'static> InstanceContainer<C> {
         id
     }
 
-    pub fn submit(&mut self, instance: usize, connection: C) -> ::std::io::Result<()> {
+    pub fn submit(&mut self, instance: usize, remote: R) -> ::std::io::Result<()> {
         if let Some(inst) = self.instances.get_mut(instance) {
             inst.sender
-                .send(connection)
+                .send(remote)
                 .map_err(|_e| Error::from(ErrorKind::BrokenPipe))?;
             Ok(())
         } else {

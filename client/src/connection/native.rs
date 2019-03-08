@@ -1,4 +1,4 @@
-use super::*;
+use mirror::Remote;
 
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Receiver, channel, TryRecvError};
@@ -59,7 +59,7 @@ impl<S: Stream+Splittable+Send+'static> WsConnection<S> where
     }
 }
 
-impl<S: Stream+Splittable+Send> Connection for WsConnection<S> {
+impl<S: Stream+Splittable+Send> Remote for WsConnection<S> {
     fn close(&mut self) {
         self.alive = false;
     }
@@ -68,15 +68,15 @@ impl<S: Stream+Splittable+Send> Connection for WsConnection<S> {
         self.alive
     }
 
-    fn send(&mut self, message: &str) {
-        self.alive &= self.writer
+    fn send(&mut self, message: &str) -> Result<(), mirror::Error> {
+        Ok(self.alive &= self.writer
             .lock()
             .unwrap()
             .send_message(&Message::text(message.to_string()))
-            .is_ok();
+            .is_ok())
     }
 
-    fn message(&mut self) -> Option<String> {
+    fn recv(&mut self) -> Option<String> {
         match self.reader.try_recv() {
             Ok(message) => {
                 Some(message)

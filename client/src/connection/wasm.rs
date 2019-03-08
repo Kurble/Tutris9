@@ -1,4 +1,4 @@
-use super::*;
+use mirror::Remote;
 use std::rc::Rc;
 use std::cell::RefCell;
 use stdweb::web::WebSocket;
@@ -44,7 +44,7 @@ impl WsConnection {
     }
 }
 
-impl Connection for WsConnection {
+impl Remote for WsConnection {
     fn close(&mut self) {
         self.inner.borrow().socket.close();
     }
@@ -53,12 +53,13 @@ impl Connection for WsConnection {
         self.inner.borrow().alive
     }
 
-    fn send(&mut self, message: &str) {
+    fn send(&mut self, message: &str) -> Result<(), mirror::Error> {
         let ok = self.inner.borrow().socket.send_text(message).is_ok();
         self.inner.borrow_mut().alive &= ok;
+        Ok(())
     }
 
-    fn message(&mut self) -> Option<String> {
+    fn recv(&mut self) -> Option<String> {
         let m = &mut self.inner.borrow_mut().messages;
         if m.len() > 0 {
             Some(m.remove(0))

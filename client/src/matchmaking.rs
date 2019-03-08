@@ -1,8 +1,8 @@
 use super::*;
-use super::client::*;
-use super::game::Game;
+use crate::game::Game;
+use crate::connection::make_connection;
+use mirror::{Remote, Client};
 use tetris_model::matchmaking::MatchmakingState;
-use tetris_model::connection::*;
 
 use quicksilver::{
     Result,
@@ -11,15 +11,18 @@ use quicksilver::{
     lifecycle::Window,
 };
 
-pub struct Matchmaking<C: Connection> {
-    pub client: Client<MatchmakingState, C>,
+pub struct Matchmaking<R: Remote> {
+    pub client: Client<MatchmakingState, R>,
     font: Font,
     timer_style: FontStyle,
 }
 
-impl<C: Connection + 'static> Matchmaking<C> {
-    pub fn new(client: ConnectClient<MatchmakingState, C>) -> Box<Future<Item=Box<Scene>, Error=quicksilver::Error>> {
+impl<R: Remote + 'static> Matchmaking<R> {
+    pub fn new<F>(client: F) -> Box<Future<Item=Box<Scene>, Error=quicksilver::Error>> where
+        F: 'static + Future<Item=Client<MatchmakingState, R>, Error=mirror::Error>
+    {
         let font = Font::load("font.ttf");
+        let client = client.map_err(|_| quicksilver::Error::IOError(::std::io::ErrorKind::ConnectionRefused.into()));
 
         Box::new(client.join(font).map(move |(client, font)| {
             Box::new(Self {
@@ -31,7 +34,7 @@ impl<C: Connection + 'static> Matchmaking<C> {
     }
 }
 
-impl<C: Connection> Scene for Matchmaking<C> {
+impl<R: Remote> Scene for Matchmaking<R> {
     fn update(&mut self, _: &mut Window) -> Result<()> {
         self.client.update();
         Ok(())

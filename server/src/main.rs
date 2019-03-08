@@ -1,13 +1,7 @@
-use tetris_model::connection::*;
-
-mod shared_server;
-mod private_server;
+mod game;
+mod matchmaking;
 mod instance;
 
-use self::instance::InstanceContainer;
-
-use std::time::{Instant, Duration};
-use std::mem::replace;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel, TryRecvError};
 use std::str::FromStr;
@@ -17,149 +11,8 @@ use actix_web::server::HttpServer;
 use actix_web::{ws, http, App, Error, HttpRequest, HttpResponse};
 use actix_web::fs::NamedFile;
 
-use rand::random;
-
 use clap::App as ClapApp;
 use clap::Arg;
-
-struct Match {
-    users: Vec<String>,
-    wait_time: usize,
-}
-
-fn run_matchmaking_server<C>(listener: Receiver<C>,
-                             container: Arc<Mutex<InstanceContainer<C>>>) -> ::std::io::Result<()>
-    where
-        C: Connection + Send + 'static
-{
-    let factory = || tetris_model::matchmaking::MatchmakingState {
-        done: false,
-        matched: false,
-        player_key: String::new(),
-        player_id: 0,
-        players_found: 0,
-        instance_address: String::new(),
-        wait_time: 91,
-    };
-
-    let mut server = private_server::PrivateServer::new(factory, listener);
-    let mut last_match = Instant::now();
-
-    let mut current_match = Match {
-        users: Vec::new(),
-        wait_time: 4,
-    };
-
-    loop {
-        server.update();
-
-        let check = Instant::now();
-        if check.duration_since(last_match).as_secs() >= 1 {
-            last_match = check;
-
-            current_match.wait_time -= 1;
-
-            current_match.users.retain(|user_key| {
-                server.users().find(|user| user.player_key.as_str() == user_key).is_some()
-            });
-
-            // try to fill the current match
-            for user in server.users() {
-                if user.matched == false && current_match.users.len() < 9 {
-                    let key = format!("{:x}-{:x}", random::<u64>(), random::<u64>());
-
-                    user.command("matched/set:true");
-                    user.command(format!("player_key/set:\"{}\"", key).as_str());
-
-                    current_match.users.push(key);
-                    current_match.wait_time = 10;
-                }
-
-                user.command(format!("wait_time/set:{}", current_match.wait_time).as_str());
-                user.command(format!("players_found/set:{}", current_match.users.len()).as_str());
-            }
-
-            if current_match.wait_time == 0 {
-                if current_match.users.len() < 2 {
-                    current_match.wait_time = 91;
-                } else {
-                    let users = current_match.users.clone();
-
-                    // make sure everyone has the correct player id
-                    for user in server.users() {
-                        if let Some(id) = users.iter().enumerate()
-                            .find(|(_, u)| u.as_str() == user.player_key)
-                            .map(|(i, _)| i) {
-                            user.command(format!("player_id/set:{}", id).as_str());
-                        }
-                    }
-
-                    // create a new instance server to host the match
-                    let c = container.clone();
-                    let slot = container
-                        .lock()
-                        .map(move |mut i| {
-                            let users = users;
-                            i.create(move |listener, _| {
-                                run_instance_server(listener, users).expect("matchmaker failed");
-                            }, c)
-                        })
-                        .expect("failed to create game instance");
-
-                    // report the existence of the new host to the users that should connect to it.
-                    let commands = [
-                        format!("instance_address/set:\"{}\"", slot),
-                        format!("done/set:true"),
-                    ];
-                    for user in server.users() {
-                        if user.matched {
-                            for command in commands.iter() {
-                                user.command(command.as_str());
-                            }
-                            user.kick();
-                        }
-                    }
-
-                    // reset matchmaking
-                    current_match = Match {
-                        users: Vec::new(),
-                        wait_time: 91,
-                    };
-                }
-            }
-        }
-    }
-}
-
-fn run_instance_server<C>(listener: Receiver<C>,
-                          users: Vec<String>) -> std::io::Result<()> where
-    C: Connection
-{
-    let instance = tetris_model::instance::InstanceState::new(users);
-
-    let mut server = shared_server::SharedServer::new(instance, listener);
-
-    println!("instance started");
-    loop {
-        server.update();
-        server.server_update();
-
-        let commands = replace(&mut server.context.as_mut().unwrap().broadcast_commands,
-                               Vec::new());
-
-        for command in commands {
-            server.command(command.as_str());
-        }
-
-        if server.done || (server.started && server.connections() == 0) {
-            ::std::thread::sleep(Duration::from_secs(1));
-            break;
-        }
-    }
-    println!("instance terminating");
-
-    Ok(())
-}
 
 #[derive(Message)]
 struct WsMessage(pub String);
@@ -240,7 +93,7 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for Ws {
     }
 }
 
-impl Connection for WsConnection {
+impl mirror::Remote for WsConnection {
     fn close(&mut self) {
         if self.alive {
             self.addr.do_send(WsClose);
@@ -252,11 +105,11 @@ impl Connection for WsConnection {
         self.alive
     }
 
-    fn send(&mut self, message: &str) {
-        self.addr.do_send(WsMessage(message.to_string()));
+    fn send(&mut self, message: &str) -> Result<(), mirror::Error> {
+        Ok(self.addr.do_send(WsMessage(message.to_string())))
     }
 
-    fn message(&mut self) -> Option<String> {
+    fn recv(&mut self) -> Option<String> {
         match self.rx.try_recv() {
             Ok(result) => Some(result),
             Err(TryRecvError::Empty) => None,
@@ -298,7 +151,7 @@ fn main() {
     let instances = Arc::new(Mutex::new(instance::InstanceContainer::new()));
 
     instances.lock().unwrap().create(|listener, container| {
-        run_matchmaking_server(listener, container).expect("matchmaker failed");
+        matchmaking::run_matchmaking_server(listener, container).expect("matchmaker failed");
     }, instances.clone());
 
     HttpServer::new(move || {

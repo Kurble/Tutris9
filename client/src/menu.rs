@@ -1,6 +1,5 @@
 use super::*;
-
-use tetris_model::connection::*;
+use crate::connection::make_connection;
 
 use quicksilver::{
     Result,
@@ -76,7 +75,7 @@ impl Scene for Menu {
             self.connect = false;
 
             let address = format!("ws://{}/instance/0", util::get_host());
-            let client = client::Client::new(make_connection(address.as_str()));
+            let client = mirror::Client::new(make_connection(address.as_str()));
             Some(matchmaking::Matchmaking::new(client))
         } else {
             None

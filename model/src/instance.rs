@@ -11,10 +11,10 @@ pub struct ServerState {
     pub players: Vec<String>,
     pub awaiting: Vec<String>,
     pub deadline: Instant,
-    pub broadcast_commands: Vec<String>,
 }
 
 #[ReflectFn(
+    Fn(name="server_update", args="0"),
     Fn(name="login", args="1"),
     Fn(name="drop", args="2"),
     Fn(name="target", args="2"),
@@ -22,7 +22,7 @@ pub struct ServerState {
 )]
 #[derive(Serialize, Deserialize, Reflect)]
 pub struct InstanceState {
-    pub context: Hidden<ServerState>,
+    pub state: Hidden<ServerState>,
     pub games: Vec<PlayerState>,
     pub games_ko: Vec<usize>,
     pub status: String,
@@ -67,26 +67,15 @@ impl ServerState {
             .find(|(_, p)| p.as_str() == player_key)
             .map(|(i, _)| i)
     }
-
-    pub fn player_ko(&mut self, player_key: &str) {
-        let index = self.player_index(player_key).unwrap();
-        self.broadcast(format!("games/{}/ko/set:true", index));
-        self.broadcast(format!("games_ko/push:{}", index));
-    }
-
-    pub fn broadcast(&mut self, command: String) {
-        self.broadcast_commands.push(command);
-    }
 }
 
 impl InstanceState {
     pub fn new(players: Vec<String>) -> Self {
         Self {
-            context: Hidden::new(ServerState {
+            state: Hidden::new(ServerState {
                 players: players.clone(),
                 awaiting: players.clone(),
                 deadline: Instant::now() + Duration::from_secs(10),
-                broadcast_commands: Vec::new(),
             }),
             games: players
                 .iter()
@@ -100,40 +89,10 @@ impl InstanceState {
         }
     }
 
-    pub fn server_update(&mut self) {
-        let context = self.context.as_mut().unwrap();
-
-        if Instant::now() > context.deadline && self.started == false {
-            context.broadcast(String::from("started/set:true"));
-            context.broadcast(String::from("status/set:\"In game\""));
-            let missed = replace(&mut context.awaiting, Vec::new());
-
-            for player in missed {
-                context.player_ko(player.as_str());
-            }
-        }
-
-        if self.started && !self.done && self.games.iter().filter(|g| !g.ko).count() < 2 {
-            context.broadcast(String::from("done/set:true"));
-            self.done = true;
-        }
-
-        if !self.done {
-            for (i, player) in self.games.iter().enumerate() {
-                if player.target >= self.games.len() || self.games[player.target].ko ||
-                    player.target == i {
-                    let new_target = self.games
-                        .iter()
-                        .enumerate()
-                        .filter(|&(j, g)| i != j && !g.ko)
-                        .map(|(j, _)| j)
-                        .choose(&mut thread_rng())
-                        .unwrap();
-
-                    context.broadcast(format!("games/{}/target/set:{}", i, new_target));
-                }
-            }
-        }
+    pub fn player_ko<C: Context>(&mut self, context: &mut C, player_key: &str) {
+        let index = self.state.player_index(player_key).unwrap();
+        context.command(self, format!("games/{}/ko/set:true", index).as_str()).unwrap();
+        context.command(self, format!("games_ko/push:{}", index).as_str()).unwrap();
     }
 
     pub fn in_game(&self, player: usize) -> bool {
@@ -143,33 +102,69 @@ impl InstanceState {
             self.games_ko.len() != self.games.len() - 1
     }
 
-    fn login(&mut self, player: String) {
-        if self.started == false {
-            let context = self.context.as_mut().unwrap();
-            context.awaiting.retain(|key| key.as_str() != player.as_str());
-            let count = context.awaiting.len();
-            context.broadcast(format!("status/set:\"Waiting for players.. ({})\"", count));
+    fn server_update<C: Context>(&mut self, mut context: C) {
+        if Instant::now() > self.state.deadline && self.started == false {
+            context.command(self, "started/set:true").unwrap();
+            context.command(self, "status/set:\"In game\"").unwrap();
+            let missed = replace(&mut self.state.awaiting, Vec::new());
 
-            // update the timer so that we don't have to wait too long
-            let option1 = Instant::now() + Duration::from_secs(5);
-            let option2 = context.deadline + Duration::from_secs(1);
-            if option2 < option1 {
-                context.deadline = option2;
-            } else {
-                context.deadline = option1;
+            for player in missed {
+                if let Some(index) = self.state.player_index(player.as_str()) {
+                    context.command(self, format!("games/{}/ko/set:true", index).as_str()).unwrap();
+                    context.command(self, format!("games_ko/push:{}", index).as_str()).unwrap();
+                }
+            }
+        }
+
+        if self.started && !self.done && self.games.iter().filter(|g| !g.ko).count() < 2 {
+            context.command(self, "done/set:true").unwrap();
+        }
+
+        if !self.done {
+            for i in 0..self.games.len() {
+                if self.games[i].target >= self.games.len() ||
+                    self.games[self.games[i].target].ko || self.games[i].target == i {
+                    let new_target = self.games
+                        .iter()
+                        .enumerate()
+                        .filter(|&(j, g)| i != j && !g.ko)
+                        .map(|(j, _)| j)
+                        .choose(&mut thread_rng())
+                        .unwrap();
+
+                    context.command(self, format!("games/{}/target/set:{}", i, new_target)).unwrap();
+                }
             }
         }
     }
 
-    fn drop(&mut self, player: String, state: ActiveState) {
-        if let Some(id) = self.context.as_ref().unwrap().player_index(player.as_str()) {
-            if self.in_game(id) {
-                let context = self.context.as_mut().unwrap();
+    fn login<C: Context>(&mut self, mut context: C, player: String) {
+        if self.started == false { ;
+            self.state.awaiting.retain(|key| key.as_str() != player.as_str());
+            let count = self.state.awaiting.len();
+            context
+                .command(self, format!("status/set:\"Waiting for players.. ({})\"", count))
+                .unwrap();
 
-                context.broadcast(format!("games/{}/moves/set:{}", id, self.games[id].moves + 1));
+            // update the timer so that we don't have to wait too long
+            let option1 = Instant::now() + Duration::from_secs(5);
+            let option2 = self.state.deadline + Duration::from_secs(1);
+            if option2 < option1 {
+                self.state.deadline = option2;
+            } else {
+                self.state.deadline = option1;
+            }
+        }
+    }
+
+    fn drop<C: Context>(&mut self, mut context: C, player: String, state: ActiveState) {
+        if let Some(id) = self.state.player_index(player.as_str()) {
+            if self.in_game(id) {
+                context.command(self, format!("games/{}/moves/set:{}", id,
+                                              self.games[id].moves + 1)).unwrap();
 
                 if self.games[id].held {
-                    context.broadcast(format!("games/{}/held/set:false", id));
+                    context.command(self, format!("games/{}/held/set:false", id)).unwrap();
                 }
 
                 // place the tetrimino
@@ -183,10 +178,8 @@ impl InstanceState {
 
                             self.games[id].field[index as usize] = col;
 
-                            context.broadcast(format!("games/{}/field/{}/set:{}",
-                                                      id,
-                                                      index,
-                                                      col));
+                            context.command(self, format!("games/{}/field/{}/set:{}", id, index,
+                                                          col)).unwrap();
                         }
                     }
                 }
@@ -201,15 +194,15 @@ impl InstanceState {
                             .iter()
                             .fold(true, |clear, &b| clear && b > 0);
                         if clear {
-                            context.broadcast(format!("games/{}/call:clear:{}", id, y));
+                            context.command(self, format!("games/{}/call:clear:{}",id,y)).unwrap();
                             lines += 1;
                         }
                     }
                 }
                 if lines > 0 {
-                    context.broadcast(format!("games/{}/call:compact:", id));
-                    context.broadcast(format!("games/{}/combo/set:{}", id,
-                                              self.games[id].combo + 1));
+                    context.command(self, format!("games/{}/call:compact:", id)).unwrap();
+                    context.command(self, format!("games/{}/combo/set:{}", id,
+                                                  self.games[id].combo + 1)).unwrap();
 
                     let garbage = match lines {
                         2 => 1,
@@ -222,40 +215,44 @@ impl InstanceState {
                         let column = random::<u32>() % 10;
                         for i in 0..garbage {
                             if i < self.games[id].garbage.len() {
-                                context.broadcast(format!("games/{}/garbage/remove:0", id));
+                                context
+                                    .command(self, format!("games/{}/garbage/remove:0", id))
+                                    .unwrap();
                             } else {
-                                context.broadcast(format!("games/{}/garbage/push:[{},3]",
-                                                          self.games[id].target, column));
+                                context
+                                    .command(self, format!("games/{}/garbage/push:[{},3]",
+                                                           self.games[id].target, column))
+                                    .unwrap();
                             }
                         }
                     }
 
                 } else if self.games[id].combo > 0 {
-                    context.broadcast(format!("games/{}/combo/set:{}", id, 0));
+                    context.command(self, format!("games/{}/combo/set:{}", id, 0)).unwrap();
                 }
 
                 if self.games[id].garbage.len() > 0 {
-                    context.broadcast(format!("games/{}/call:gen_garbage:", id));
+                    context.command(self, format!("games/{}/call:gen_garbage:", id)).unwrap();
                 }
 
                 // check for k.o.
                 if self.games[id].field[..10].iter().find(|&&x| x > 0).is_some() {
-                    context.player_ko(player.as_str());
+                    context.command(self, format!("games/{}/ko/set:true", id)).unwrap();
+                    context.command(self, format!("games_ko/push:{}", id)).unwrap();
                 }
 
                 // move on to the next piece
                 let next = self.games[id].random.as_mut().unwrap().gen::<u8>() % 7;
-                context.broadcast(format!("games/{}/current/set:{}",
-                                          id,
-                                          self.games[id].next[0]));
-                context.broadcast(format!("games/{}/next/remove:0", id));
-                context.broadcast(format!("games/{}/next/push:{}", id, next));
+                context.command(self, format!("games/{}/current/set:{}", id,
+                                              self.games[id].next[0])).unwrap();
+                context.command(self, format!("games/{}/next/remove:0", id)).unwrap();
+                context.command(self, format!("games/{}/next/push:{}", id, next)).unwrap();
             }
         }
     }
 
-    fn target(&mut self, player: String, target: usize) {
-        if let Some(id) = self.context.as_ref().unwrap().player_index(player.as_str()) {
+    fn target<C: Context>(&mut self, mut context: C, player: String, target: usize) {
+        if let Some(id) = self.state.player_index(player.as_str()) {
             if self.in_game(id) {
                 let mut actual_target = target;
 
@@ -270,30 +267,31 @@ impl InstanceState {
                         .unwrap();
                 }
 
-                self.context.as_mut().unwrap()
-                    .broadcast(format!("games/{}/target/set:{}", id, actual_target));
+                context
+                    .command(self, format!("games/{}/target/set:{}", id, actual_target))
+                    .unwrap();
             }
         }
     }
 
-    fn hold(&mut self, player: String) {
-        if let Some(id) = self.context.as_ref().unwrap().player_index(player.as_str()) {
+    fn hold<C: Context>(&mut self, mut context: C, player: String) {
+        if let Some(id) = self.state.player_index(player.as_str()) {
             if self.in_game(id) && !self.games[id].held {
-                let context = self.context.as_mut().unwrap();
+                context.command(self, format!("games/{}/held/set:true", id)).unwrap();
 
-                self.games[id].held = true;
+                let old = self.games[id].hold;
+                let current = self.games[id].current;
 
-                context.broadcast(format!("games/{}/hold/set:{}", id, self.games[id].current));
-                context.broadcast(format!("games/{}/held/set:true", id));
+                context.command(self, format!("games/{}/hold/set:{}", id, current)).unwrap();
 
-                if self.games[id].hold == 8 {
+                if old == 8 {
                     let next = self.games[id].random.as_mut().unwrap().gen::<u8>() % 7;
-                    context.broadcast(format!("games/{}/current/set:{}", id,
-                                              self.games[id].next[0]));
-                    context.broadcast(format!("games/{}/next/remove:0", id));
-                    context.broadcast(format!("games/{}/next/push:{}", id, next));
+                    context.command(self, format!("games/{}/current/set:{}", id,
+                                                  self.games[id].next[0])).unwrap();
+                    context.command(self, format!("games/{}/next/remove:0", id)).unwrap();
+                    context.command(self, format!("games/{}/next/push:{}", id, next)).unwrap();
                 } else {
-                    context.broadcast(format!("games/{}/current/set:{}", id, self.games[id].hold));
+                    context.command(self, format!("games/{}/current/set:{}", id, old)).unwrap();
                 }
             }
         }
@@ -323,13 +321,13 @@ impl PlayerState {
         }
     }
 
-    fn clear(&mut self, line: usize) {
+    fn clear<C: Context>(&mut self, _: C, line: usize) {
         for i in 0..10 {
             self.field[line*10+i] = 0;
         }
     }
 
-    fn compact(&mut self) {
+    fn compact<C: Context>(&mut self, _: C) {
         for _ in 0..4 {
             for y in 0..20 {
                 let y = 20 - y;
@@ -343,7 +341,7 @@ impl PlayerState {
         }
     }
 
-    fn gen_garbage(&mut self) {
+    fn gen_garbage<C: Context>(&mut self, _: C) {
         for (column, delay) in self.garbage.iter_mut() {
             if *delay > 0 {
                 *delay -= 1;

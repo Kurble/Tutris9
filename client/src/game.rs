@@ -1,8 +1,7 @@
 use super::*;
-use super::client::*;
-use super::util::*;
+use crate::util::*;
+use mirror::{Remote, Client};
 use tetris_model::instance::*;
-use tetris_model::connection::*;
 use std::time::Duration;
 use rand::thread_rng;
 use rand::seq::SliceRandom;
@@ -16,8 +15,8 @@ use quicksilver::{
     lifecycle::{Window},
 };
 
-pub struct Game<C: Connection> {
-    client: Client<InstanceState, C>,
+pub struct Game<R: Remote> {
+    client: Client<InstanceState, R>,
     player_id: usize,
     player_key: String,
 
@@ -44,10 +43,13 @@ pub struct Game<C: Connection> {
     mapping: [usize; 8],
 }
 
-impl<C: Connection + 'static> Game<C> {
-    pub fn new(client: ConnectClient<InstanceState, C>, player_id: usize, player_key: String)
-        -> Box<Future<Item=Box<Scene>, Error=quicksilver::Error>> {
-
+impl<R: Remote + 'static> Game<R> {
+    pub fn new<F>(client: F, player_id: usize, player_key: String)
+        -> Box<Future<Item=Box<Scene>, Error=quicksilver::Error>>
+        where
+            F: 'static + Future<Item=Client<InstanceState, R>, Error=mirror::Error>
+    {
+        let client = client.map_err(|_| quicksilver::Error::IOError(::std::io::ErrorKind::ConnectionRefused.into()));
         let font = Font::load("font.ttf");
         let own_blocks = Image::load("own_blocks.png");
         let other_blocks = Image::load("other_blocks.png");
@@ -60,7 +62,7 @@ impl<C: Connection + 'static> Game<C> {
 
         Box::new(client.join(font.join(own_blocks.join(other_blocks.join(own_bg.join(other_bg.join(ko.join(bomb.join(bomb_small))))))))
             .map(move |(mut client, (font, (own_blocks, (other_blocks, (own_bg, (other_bg, (ko, (bomb, bomb_small))))))))| {
-                client.command(format!("call:login:\"{}\"", player_key).as_str());
+                client.command(format!("call:login:\"{}\"", player_key).as_str()).unwrap();
 
                 let mut mapping = [0; 8];
                 let mut mapping_i = (0..9).filter(|&i| i != player_id);
@@ -111,7 +113,7 @@ impl<C: Connection + 'static> Game<C> {
         // send drop command
         self.client.command(format!("call:drop:\"{}\" {}",
                                     self.player_key,
-                                    serde_json::to_string(&self.state).unwrap()).as_str());
+                                    serde_json::to_string(&self.state).unwrap()).as_str()).unwrap();
 
         // update the field in advance
         for y in 0..4 {
@@ -178,7 +180,7 @@ impl<C: Connection + 'static> Game<C> {
     }
 }
 
-impl<C: Connection + 'static> Scene for Game<C> {
+impl<R: Remote + 'static> Scene for Game<R> {
     fn update(&mut self, window: &mut Window) -> Result<()> {
         self.client.update();
 
@@ -232,7 +234,9 @@ impl<C: Connection + 'static> Scene for Game<C> {
                     if !self.client.games[self.player_id].held {
                         self.client.games[self.player_id].held = true;
                         self.state = ActiveState::new();
-                        self.client.command(format!("call:hold:\"{}\"", self.player_key).as_str());
+                        self.client
+                            .command(format!("call:hold:\"{}\"", self.player_key).as_str())
+                            .unwrap();
                     }
                 },
                 _ => (),
