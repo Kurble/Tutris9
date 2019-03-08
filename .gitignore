@@ -5,4 +5,5 @@ deploy/
 .DS_Store
 static/tetris_client.wasm
 static/tetris_client.js
+Cargo.lock
 
