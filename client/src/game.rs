@@ -3,7 +3,6 @@ use crate::util::*;
 use mirror::{Remote, Client};
 use tetris_model::instance::*;
 use std::time::Duration;
-use std::cmp::Ordering;
 use rand::thread_rng;
 use rand::seq::SliceRandom;
 
@@ -277,39 +276,8 @@ impl<R: Remote + 'static> Scene for Game<R> {
         window.set_view(View::new(view));
 
         // return tiling pattern on the background
-        {
-            self.pattern_timer += window.draw_rate() as f32 * 0.000015;
-
-            let size = 256.0;
-            let transform = Transform::rotate(30.0);
-            let inverse = transform.inverse();
-
-            let points: Vec<_> = [(0.0, 0.0), (view.size.x, 0.0), (0.0, view.size.y), (view.size.x, view.size.y)]
-                .iter()
-                .map(|&(x, y)| inverse * Vector::new(x, y))
-                .collect();
-
-            let c = |a: &f32, b: &f32| a.partial_cmp(b).unwrap_or(Ordering::Equal);
-            let x_min = points.iter().map(|p| p.x).min_by(c).unwrap();
-            let mut y = points.iter().map(|p| p.y).min_by(c).unwrap();
-            let x_max = points.iter().map(|p| p.x).max_by(c).unwrap() + size * 0.5;
-            let y_max = points.iter().map(|p| p.y).max_by(c).unwrap() + size * 0.5;
-
-            let tile = Rectangle::new(Vector::ZERO, Vector::new(size, size));
-
-            while y < y_max {
-                let mut x = x_min - size * 1.5 + self.pattern_timer.fract() * size;
-                while x < x_max {
-                    window.draw_ex(&tile,
-                                   Img(&self.pattern),
-                                   transform  * Transform::translate(Vector::new(x, y)),
-                                   -3);
-
-                    x += size;
-                }
-                y += size;
-            }
-        }
+        self.pattern_timer += window.draw_rate() as f32 * 0.000015;
+        util::draw_pattern(self.pattern_timer, &self.pattern, view, window);
         window.draw_ex(&Rectangle::new(Vector::new(-320.0, -120.0), Vector::new(640.0, 240.0)),
                        Col(Color::BLACK),
                        Transform::translate(Vector::new(280.0, 40.0)) * Transform::rotate(60.0),
