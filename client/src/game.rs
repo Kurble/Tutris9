@@ -446,7 +446,7 @@ impl<R: Remote + 'static> Scene for Game<R> {
         // render other games
         for y in 0..2 {
             for x in 0..4 {
-                let i = 0;//self.mapping[x + y * 4];
+                let i = self.mapping[x + y * 4];
                 if i < self.client.games.len() {
                     let bg = if x < 2 {
                         Rectangle::new(Vector::new(40.0 + x as f32 * 50.0,
