@@ -30,11 +30,7 @@ enum DrawScene {
 
 impl State for DrawScene {
     fn new() -> Result<Self> {
-        if cfg!(debug_assertions) {
-            Ok(DrawScene::Loading(menu::Menu::new()))
-        } else {
-            Ok(DrawScene::NotFullscreen(menu::Menu::new()))
-        }
+        Ok(DrawScene::Loading(menu::Menu::new()))
     }
 
     fn update(&mut self, window: &mut Window) -> Result<()> {
@@ -94,7 +90,7 @@ impl State for DrawScene {
 
 fn main() {
     run::<DrawScene>("Tutris 9",
-                     Vector::new(640, 360),
+                     Vector::new(1280, 720),
                      Settings {
                          draw_rate: 16.6666667,
                          update_rate: 16.6666667,
