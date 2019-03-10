@@ -186,11 +186,6 @@ impl<R: Remote + 'static> Game<R> {
             }
         }
     }
-
-    fn mouse(&self, window: &mut Window) -> Vector {
-        let pos = window.mouse().pos();
-
-    }
 }
 
 impl<R: Remote + 'static> Scene for Game<R> {
