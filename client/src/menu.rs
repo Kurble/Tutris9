@@ -74,7 +74,9 @@ impl Scene for Menu {
         if self.connect {
             self.connect = false;
 
-            let address = format!("ws://{}/instance/0", util::get_host());
+
+
+            let address = format!("{}//{}/instance/0", util::get_protocol(), util::get_host());
             let client = mirror::Client::new(make_connection(address.as_str()));
             Some(matchmaking::Matchmaking::new(client))
         } else {

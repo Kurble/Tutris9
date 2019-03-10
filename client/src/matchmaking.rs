@@ -62,7 +62,7 @@ impl<R: Remote> Scene for Matchmaking<R> {
     fn advance(&mut self) -> Option<Box<Future<Item=Box<Scene>, Error=quicksilver::Error>>> {
         if self.client.done {
             self.client.done = false;
-            let address = format!("ws://{}/instance/{}", util::get_host(),
+            let address = format!("{}//{}/instance/{}", util::get_protocol(), util::get_host(),
                                   self.client.instance_address);
             let client = Client::new(make_connection(address.as_str()));
 

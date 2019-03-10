@@ -3,9 +3,11 @@ use mirror::*;
 use std::iter::{repeat, repeat_with};
 use std::time::{Instant, Duration};
 use std::mem::replace;
-use rand::{SeedableRng, Rng, random, thread_rng};
+use rand::{SeedableRng, random, thread_rng};
 use rand::rngs::StdRng;
 use rand::seq::IteratorRandom;
+use rand::seq::SliceRandom;
+use serde_json::Value;
 
 pub struct ServerState {
     pub players: Vec<String>,
@@ -242,11 +244,22 @@ impl InstanceState {
                 }
 
                 // move on to the next piece
-                let next = self.games[id].random.as_mut().unwrap().gen::<u8>() % 7;
                 context.command(self, format!("games/{}/current/set:{}", id,
                                               self.games[id].next[0])).unwrap();
                 context.command(self, format!("games/{}/next/remove:0", id)).unwrap();
-                context.command(self, format!("games/{}/next/push:{}", id, next)).unwrap();
+
+                if self.games[id].next.len() < 14 {
+                    let mut i = 0;
+                    let mut next: Vec<u8> = repeat_with(|| { i += 1; i % 7 })
+                        .take(28)
+                        .collect();
+                    next.shuffle(self.games[id].random.as_mut().unwrap());
+                    self.games[id].next.extend_from_slice(next.as_slice());
+                    let val: Value = self.games[id].next.clone().into();
+                    context
+                        .command(self, format!("games/{}/next/set:{}", id, val.to_string()))
+                        .unwrap();
+                }
             }
         }
     }
@@ -285,11 +298,9 @@ impl InstanceState {
                 context.command(self, format!("games/{}/hold/set:{}", id, current)).unwrap();
 
                 if old == 8 {
-                    let next = self.games[id].random.as_mut().unwrap().gen::<u8>() % 7;
                     context.command(self, format!("games/{}/current/set:{}", id,
                                                   self.games[id].next[0])).unwrap();
                     context.command(self, format!("games/{}/next/remove:0", id)).unwrap();
-                    context.command(self, format!("games/{}/next/push:{}", id, next)).unwrap();
                 } else {
                     context.command(self, format!("games/{}/current/set:{}", id, old)).unwrap();
                 }
@@ -301,8 +312,12 @@ impl InstanceState {
 impl PlayerState {
     pub fn new() -> Self {
         let mut rng = StdRng::from_seed(random());
-        let current = rng.gen::<u8>() % 7;
-        let next = repeat_with(|| rng.gen::<u8>() % 7).take(32).collect();
+        let mut i = 0;
+        let mut next: Vec<u8> = repeat_with(|| { i += 1; i % 7 })
+            .take(28)
+            .collect();
+        next.shuffle(&mut rng);
+        let current = next.drain(0..1).next().unwrap();
 
         Self {
             random: Hidden::new(rng),

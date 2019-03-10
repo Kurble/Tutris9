@@ -5,6 +5,7 @@ mod instance;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel, TryRecvError};
 use std::str::FromStr;
+use std::fs::metadata;
 
 use actix::*;
 use actix_web::server::HttpServer;
@@ -13,6 +14,8 @@ use actix_web::fs::NamedFile;
 
 use clap::App as ClapApp;
 use clap::Arg;
+
+use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
 #[derive(Message)]
 struct WsMessage(pub String);
@@ -150,11 +153,13 @@ fn main() {
 
     let instances = Arc::new(Mutex::new(instance::InstanceContainer::new()));
 
-    instances.lock().unwrap().create(|listener, container| {
+    let use_ssl = metadata("key.pem").is_ok() && metadata("cert.pem").is_ok();
+
+    instances.lock().unwrap().create(move |listener, container| {
         matchmaking::run_matchmaking_server(listener, container).expect("matchmaker failed");
     }, instances.clone());
 
-    HttpServer::new(move || {
+    let server = HttpServer::new(move || {
         App::with_state(WsServerState { instances: instances.clone() })
             .handler("/static/", |req: &HttpRequest<WsServerState>| -> Result<NamedFile, Error> {
                 let path = req.path().trim_start_matches("/");
@@ -176,9 +181,19 @@ fn main() {
                     .finish()
             }))
             .resource("/instance/{id}", |r| r.f(instance_route))
-    }).bind(bind).unwrap().start();
+    });
 
-    println!("Server systems started");
+    if use_ssl {
+        let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
+        builder.set_private_key_file("key.pem", SslFiletype::PEM).unwrap();
+        builder.set_certificate_chain_file("cert.pem").unwrap();
+        server.bind_ssl(bind, builder).unwrap().start();
+        println!("Server started using SSL");
+    } else {
+        server.bind(bind).unwrap().start();
+        println!("SSL key and certificiate not found while looking for cert.pem and key.pem.");
+        println!("Server started without SSL");
+    }
 
     let _ = sys.run();
 }
