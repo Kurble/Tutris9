@@ -99,6 +99,7 @@ fn main() {
                          draw_rate: 16.6666667,
                          update_rate: 16.6666667,
                          vsync: true,
+                         //scale: ImageScaleStrategy::Blur,
                          ..Settings::default()
                      });
 }

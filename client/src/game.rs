@@ -3,6 +3,7 @@ use crate::util::*;
 use mirror::{Remote, Client};
 use tetris_model::instance::*;
 use std::time::Duration;
+use std::cmp::Ordering;
 use rand::thread_rng;
 use rand::seq::SliceRandom;
 
@@ -10,7 +11,7 @@ use quicksilver::{
     Future,
     Result,
     geom::{Rectangle, Transform, Vector},
-    graphics::{Background, Background::Img, Background::Blended, Color, Image, View, Font, FontStyle},
+    graphics::{Background, Background::Img, Background::Col, Background::Blended, Color, Image, View, Font, FontStyle},
     input::{Key, ButtonState},
     lifecycle::{Window},
 };
@@ -27,9 +28,12 @@ pub struct Game<R: Remote> {
 
     font: Font,
     position_style: FontStyle,
+    position_header: Image,
     position: Option<(Image, usize)>,
+
     result_style: FontStyle,
     result: Option<Image>,
+
     message: Image,
     own_blocks: Image,
     other_blocks: Image,
@@ -38,7 +42,9 @@ pub struct Game<R: Remote> {
     ko: Image,
     bomb: Image,
     bomb_small: Image,
-    //ui: Image,
+    pattern: Image,
+
+    pattern_timer: f32,
 
     mapping: [usize; 8],
 }
@@ -58,10 +64,10 @@ impl<R: Remote + 'static> Game<R> {
         let ko = Image::load("ko.png");
         let bomb = Image::load("bomb.png");
         let bomb_small = Image::load("bomb_small.png");
-        //let ui = Image::load("ui.png");
+        let pattern = Image::load("pattern.png");
 
-        Box::new(client.join(font.join(own_blocks.join(other_blocks.join(own_bg.join(other_bg.join(ko.join(bomb.join(bomb_small))))))))
-            .map(move |(mut client, (font, (own_blocks, (other_blocks, (own_bg, (other_bg, (ko, (bomb, bomb_small))))))))| {
+        Box::new(client.join(font.join(own_blocks.join(other_blocks.join(own_bg.join(other_bg.join(ko.join(bomb.join(bomb_small.join(pattern)))))))))
+            .map(move |(mut client, (font, (own_blocks, (other_blocks, (own_bg, (other_bg, (ko, (bomb, (bomb_small, pattern)))))))))| {
                 client.command(format!("call:login:\"{}\"", player_key).as_str()).unwrap();
 
                 let mut mapping = [0; 8];
@@ -74,6 +80,7 @@ impl<R: Remote + 'static> Game<R> {
 
                 let position_style = FontStyle::new(32.0, Color::WHITE);
                 let result_style = FontStyle::new(160.0, Color::WHITE);
+                let position_header = font.render("Place: ", &position_style).unwrap();
                 let message = font.render("Get Ready!", &result_style).unwrap();
 
                 Box::new(Self {
@@ -93,6 +100,7 @@ impl<R: Remote + 'static> Game<R> {
                     position_style,
                     result_style,
                     position: None,
+                    position_header,
                     result: None,
                     message,
                     own_blocks,
@@ -102,8 +110,9 @@ impl<R: Remote + 'static> Game<R> {
                     ko,
                     bomb,
                     bomb_small,
-                    //ui,
+                    pattern,
 
+                    pattern_timer: 0.0,
                     mapping,
                 }) as Box<Scene>
             }))
@@ -149,11 +158,11 @@ impl<R: Remote + 'static> Game<R> {
                 match block {
                     0 => (),
                     c => {
-                        let pos = Vector::new(240.0, 20.0);
+                        let pos = Vector::new(230.0, 0.0);
                         let x = state.x + x as i32;
                         let y = state.y + y as i32 - 1;
-                        let rect = Rectangle::new(Vector::new(x as f32 * 16.0, y as f32 * 16.0) + pos,
-                                                  Vector::new(16.0, 16.0));
+                        let rect = Rectangle::new(Vector::new(x as f32 * 18.0, y as f32 * 18.0) + pos,
+                                                  Vector::new(18.0, 18.0));
 
                         window.draw(&rect, make_bg(&blocks[c as usize]));
                     }
@@ -267,11 +276,51 @@ impl<R: Remote + 'static> Scene for Game<R> {
         let view = Rectangle::new(Vector::ZERO, Vector::new(640.0, 360.0));
         window.set_view(View::new(view));
 
-        // render the ui background
-        //window.draw_ex(&view, Img(&self.ui), Transform::IDENTITY, -2);
+        // return tiling pattern on the background
+        {
+            self.pattern_timer += window.draw_rate() as f32 * 0.000015;
+
+            let size = 256.0;
+            let transform = Transform::rotate(30.0);
+            let inverse = transform.inverse();
+
+            let points: Vec<_> = [(0.0, 0.0), (view.size.x, 0.0), (0.0, view.size.y), (view.size.x, view.size.y)]
+                .iter()
+                .map(|&(x, y)| inverse * Vector::new(x, y))
+                .collect();
+
+            let c = |a: &f32, b: &f32| a.partial_cmp(b).unwrap_or(Ordering::Equal);
+            let x_min = points.iter().map(|p| p.x).min_by(c).unwrap();
+            let mut y = points.iter().map(|p| p.y).min_by(c).unwrap();
+            let x_max = points.iter().map(|p| p.x).max_by(c).unwrap() + size * 0.5;
+            let y_max = points.iter().map(|p| p.y).max_by(c).unwrap() + size * 0.5;
+
+            let tile = Rectangle::new(Vector::ZERO, Vector::new(size, size));
+
+            while y < y_max {
+                let mut x = x_min - size * 1.5 + self.pattern_timer.fract() * size;
+                while x < x_max {
+                    window.draw_ex(&tile,
+                                   Img(&self.pattern),
+                                   transform  * Transform::translate(Vector::new(x, y)),
+                                   -3);
+
+                    x += size;
+                }
+                y += size;
+            }
+        }
+        window.draw_ex(&Rectangle::new(Vector::new(-320.0, -120.0), Vector::new(640.0, 240.0)),
+                       Col(Color::BLACK),
+                       Transform::translate(Vector::new(280.0, 40.0)) * Transform::rotate(60.0),
+                       -2);
+        window.draw_ex(&Rectangle::new(Vector::new(-240.0, -80.0), Vector::new(480.0, 160.0)),
+                       Col(Color::BLACK),
+                       Transform::translate(Vector::new(480.0, 360.0)) * Transform::rotate(-30.0),
+                       -2);
 
         // render a background for the main game
-        let bg = Rectangle::new(Vector::new(240.0, 20.0), Vector::new(160.0, 320.0));
+        let bg = Rectangle::new(Vector::new(230.0, 0.0), Vector::new(180.0, 360.0));
         window.draw_ex(&bg, Img(&self.own_bg), Transform::IDENTITY, -1);
 
         let blocks: Vec<_> = (0..8)
@@ -283,7 +332,7 @@ impl<R: Remote + 'static> Scene for Game<R> {
 
         // render the blocks for the main game
         self.draw_game(window, blocks.as_slice(), &self.client.games[self.player_id].field[10..],
-                       Vector::new(16.0, 16.0), Vector::new(240.0, 20.0));
+                       Vector::new(18.0, 18.0), Vector::new(230.0, 0.0));
 
         // render positions left
         let position = self.client.games.len() - self.client.games_ko.len();
@@ -294,7 +343,9 @@ impl<R: Remote + 'static> Scene for Game<R> {
         }
         if let Some((image, _)) = self.position.as_ref() {
             let size = image.area().size;
-            window.draw(&Rectangle::new(Vector::new(408.0, 340.0 - size.y), size), Img(image));
+            let hsize = self.position_header.area().size;
+            window.draw(&Rectangle::new(Vector::new(520.0 - hsize.x * 0.5, 290.0), hsize), Img(&self.position_header));
+            window.draw(&Rectangle::new(Vector::new(520.0 - size.x * 0.5, 310.0), size), Img(image));
         }
 
         // render the result
@@ -353,7 +404,7 @@ impl<R: Remote + 'static> Scene for Game<R> {
             // render the next tetriminoes
             for i in 0..6 {
                 let id = self.client.games[self.player_id].next[i] as usize;
-                let pos = Vector::new(408.0, 24.0 + 32.0 * i as f32);
+                let pos = Vector::new(420.0, 144.0 + 32.0 * i as f32);
                 for y in 0..4 {
                     for x in 0..4 {
                         let color = tetris_model::shapes::SHAPES[id][0][x + y * 4] as usize;
@@ -395,22 +446,22 @@ impl<R: Remote + 'static> Scene for Game<R> {
         // render other games
         for y in 0..2 {
             for x in 0..4 {
-                let i = self.mapping[x + y * 4];
+                let i = 0;//self.mapping[x + y * 4];
                 if i < self.client.games.len() {
                     let bg = if x < 2 {
-                        Rectangle::new(Vector::new(20.0 + x as f32 * 90.0,
-                                                   20.0 + y as f32 * 165.0),
-                                       Vector::new(80.0, 160.0))
+                        Rectangle::new(Vector::new(40.0 + x as f32 * 50.0,
+                                                   40.0 + y as f32 * 90.0),
+                                       Vector::new(40.0, 80.0))
                     } else {
-                        Rectangle::new(Vector::new(450.0 + (x-2) as f32 * 90.0,
-                                                   20.0 + y as f32 * 165.0),
-                                       Vector::new(80.0, 160.0))
+                        Rectangle::new(Vector::new(510.0 + (x-2) as f32 * 50.0,
+                                                   40.0 + y as f32 * 90.0),
+                                       Vector::new(40.0, 80.0))
                     };
 
                     window.draw_ex(&bg, Img(&self.other_bg), Transform::IDENTITY, -1);
 
                     self.draw_game(window, blocks.as_slice(), &self.client.games[i].field[10..],
-                                   Vector::new(8.0, 8.0), bg.pos);
+                                   Vector::new(4.0, 4.0), bg.pos);
 
                     // render waiting garbage
                     for (i, (_, delay)) in self.client.games[i].garbage.iter().enumerate() {
@@ -423,7 +474,7 @@ impl<R: Remote + 'static> Scene for Game<R> {
                     }
 
                     if self.client.games[i].ko {
-                        window.draw_ex(&Rectangle::new(Vector::new(16.0, 56.0) + bg.pos,
+                        window.draw_ex(&Rectangle::new(Vector::new(-4.0, 16.0) + bg.pos,
                                                        Vector::new(48.0, 48.0)),
                                        Img(&self.ko), Transform::IDENTITY, 1);
                     }
