@@ -30,7 +30,11 @@ enum DrawScene {
 
 impl State for DrawScene {
     fn new() -> Result<Self> {
-        Ok(DrawScene::Loading(menu::Menu::new()))
+        if cfg!(debug_assertions) {
+            Ok(DrawScene::Loading(menu::Menu::new()))
+        } else {
+            Ok(DrawScene::NotFullscreen(menu::Menu::new()))
+        }
     }
 
     fn update(&mut self, window: &mut Window) -> Result<()> {
