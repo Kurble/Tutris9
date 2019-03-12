@@ -1,5 +1,6 @@
 use super::*;
 use crate::util::*;
+use crate::controls::*;
 use mirror::{Remote, Client};
 use tetris_model::instance::*;
 use std::time::Duration;
@@ -19,6 +20,7 @@ pub struct Game<R: Remote> {
     client: Client<InstanceState, R>,
     player_id: usize,
     player_key: String,
+    controls: ControlMap,
 
     state: ActiveState,
     last_line_drop: Duration,
@@ -49,7 +51,7 @@ pub struct Game<R: Remote> {
 }
 
 impl<R: Remote + 'static> Game<R> {
-    pub fn new<F>(client: F, player_id: usize, player_key: String)
+    pub fn new<F>(client: F, player_id: usize, player_key: String, controls: ControlMap)
         -> Box<Future<Item=Box<Scene>, Error=quicksilver::Error>>
         where
             F: 'static + Future<Item=Client<InstanceState, R>, Error=mirror::Error>
@@ -86,6 +88,7 @@ impl<R: Remote + 'static> Game<R> {
                     client,
                     player_id,
                     player_key,
+                    controls,
 
                     state: ActiveState {
                         x: 2,
@@ -191,6 +194,36 @@ impl<R: Remote + 'static> Game<R> {
 impl<R: Remote + 'static> Scene for Game<R> {
     fn update(&mut self, window: &mut Window) -> Result<()> {
         self.client.update();
+        self.controls.update(window);
+
+        if self.controls[BindPoint::Left] {
+            self.state = self.client.games[self.player_id].slide_left(self.state);
+        }
+        if self.controls[BindPoint::Right] {
+            self.state = self.client.games[self.player_id].slide_right(self.state);
+        }
+        if self.controls[BindPoint::SoftDrop] {
+            self.state = self.client.games[self.player_id].slide_down(self.state);
+        }
+        if self.controls[BindPoint::HardDrop] {
+            self.state = self.client.games[self.player_id].hard_drop(self.state);
+            self.drop();
+        }
+        if self.controls[BindPoint::RotateCCW] {
+            self.state = self.client.games[self.player_id].rotate_left(self.state);
+        }
+        if self.controls[BindPoint::RotateCW] {
+            self.state = self.client.games[self.player_id].rotate_right(self.state);
+        }
+        if self.controls[BindPoint::Hold] {
+            if !self.client.games[self.player_id].held {
+                self.client.games[self.player_id].held = true;
+                self.state = ActiveState::new();
+                self.client
+                    .command(format!("call:hold:\"{}\"", self.player_key).as_str())
+                    .unwrap();
+            }
+        }
 
         add_seconds(&mut self.last_line_drop, window.update_rate() / 1000.0);
         self.game_over_duration.as_mut().map(|go| add_seconds(go, window.update_rate() / 1000.0));
@@ -218,37 +251,7 @@ impl<R: Remote + 'static> Scene for Game<R> {
 
     fn event(&mut self, event: &Event, _: &mut Window) -> Result<()> {
         if self.client.in_game(self.player_id) {
-            match event {
-                Event::Key(Key::Left, ButtonState::Pressed) => {
-                    self.state = self.client.games[self.player_id].slide_left(self.state);
-                },
-                Event::Key(Key::Right, ButtonState::Pressed) => {
-                    self.state = self.client.games[self.player_id].slide_right(self.state);
-                },
-                Event::Key(Key::Down, ButtonState::Pressed) => {
-                    self.state = self.client.games[self.player_id].slide_down(self.state);
-                },
-                Event::Key(Key::Up, ButtonState::Pressed) => {
-                    self.state = self.client.games[self.player_id].hard_drop(self.state);
-                    self.drop();
-                },
-                Event::Key(Key::A, ButtonState::Pressed) => {
-                    self.state = self.client.games[self.player_id].rotate_left(self.state);
-                },
-                Event::Key(Key::D, ButtonState::Pressed) => {
-                    self.state = self.client.games[self.player_id].rotate_right(self.state);
-                },
-                Event::Key(Key::Space, ButtonState::Pressed) => {
-                    if !self.client.games[self.player_id].held {
-                        self.client.games[self.player_id].held = true;
-                        self.state = ActiveState::new();
-                        self.client
-                            .command(format!("call:hold:\"{}\"", self.player_key).as_str())
-                            .unwrap();
-                    }
-                },
-                _ => (),
-            }
+            // todo
         } else {
             let limit = Duration::from_secs(3);
             if self.game_over_duration.as_ref().map(|&t| t > limit).unwrap_or(false) {
