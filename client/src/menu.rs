@@ -12,6 +12,7 @@ use quicksilver::{
     graphics::{Background::Img, Color, Font, FontStyle, Image, View},
     lifecycle::Window,
     combinators::Future,
+    saving::{save, load},
 };
 
 pub struct Menu {
@@ -36,7 +37,7 @@ impl Menu {
         Box::new(font.join(pattern.join(logo)).map(|(font, (pattern, logo))| {
             let button_style = FontStyle::new(48.0, Color::WHITE);
 
-            let controls = ControlMap::default();
+            let controls = load("tutris9", "_controls").unwrap_or(ControlMap::default());
 
             let mut buttons = Buttons::new();
             buttons.push(Button::new(
@@ -144,6 +145,12 @@ impl Menu {
                 current_status: "".to_string(),
             }) as Box<Scene>
         }))
+    }
+}
+
+impl Drop for Menu {
+    fn drop(&mut self) {
+        save("tutris9", "_controls", &self.controls).ok();
     }
 }
 
