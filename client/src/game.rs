@@ -1,6 +1,7 @@
 use super::*;
 use crate::util::*;
 use crate::controls::*;
+use crate::buttons::*;
 use mirror::{Remote, Client};
 use tetris_model::instance::*;
 use std::time::Duration;
@@ -12,7 +13,6 @@ use quicksilver::{
     Result,
     geom::{Rectangle, Transform, Vector},
     graphics::{Background, Background::Img, Background::Col, Background::Blended, Color, Image, View, Font, FontStyle},
-    input::{Key, ButtonState},
     lifecycle::{Window},
 };
 
@@ -21,6 +21,7 @@ pub struct Game<R: Remote> {
     player_id: usize,
     player_key: String,
     controls: ControlMap,
+    buttons: Buttons,
 
     state: ActiveState,
     last_line_drop: Duration,
@@ -78,17 +79,22 @@ impl<R: Remote + 'static> Game<R> {
                 }
                 mapping.shuffle(&mut thread_rng());
 
-
                 let position_style = FontStyle::new(32.0, Color::WHITE);
                 let result_style = FontStyle::new(160.0, Color::WHITE);
                 let position_header = font.render("Place: ", &position_style).unwrap();
                 let message = font.render("Get Ready!", &result_style).unwrap();
+                let mut buttons = Buttons::new();
+                buttons.push(Button::new(vec![util::rect(40.0, 300.0, 160.0, 40.0)],
+                                         vec![util::rect(20.0, 280.0, 240.0, 60.0)],
+                                         Color { r: 0.1, g: 0.1, b:  0.8, a: 1.0 }, 1,
+                                         font.render("Return", &position_style).ok()));
 
                 Box::new(Self {
                     client,
                     player_id,
                     player_key,
                     controls,
+                    buttons,
 
                     state: ActiveState {
                         x: 2,
@@ -195,6 +201,7 @@ impl<R: Remote + 'static> Scene for Game<R> {
     fn update(&mut self, window: &mut Window) -> Result<()> {
         self.client.update();
         self.controls.update(window);
+        self.buttons.update(window);
 
         if self.controls[BindPoint::Left] {
             self.state = self.client.games[self.player_id].slide_left(self.state);
@@ -224,6 +231,9 @@ impl<R: Remote + 'static> Scene for Game<R> {
                     .unwrap();
             }
         }
+        if self.buttons[0].clicked() {
+            self.return_to_menu = true;
+        }
 
         add_seconds(&mut self.last_line_drop, window.update_rate() / 1000.0);
         self.game_over_duration.as_mut().map(|go| add_seconds(go, window.update_rate() / 1000.0));
@@ -249,21 +259,14 @@ impl<R: Remote + 'static> Scene for Game<R> {
         Ok(())
     }
 
-    fn event(&mut self, event: &Event, _: &mut Window) -> Result<()> {
+    fn event(&mut self, event: &Event, window: &mut Window) -> Result<()> {
         if self.client.in_game(self.player_id) {
             // todo
         } else {
             let limit = Duration::from_secs(3);
             if self.game_over_duration.as_ref().map(|&t| t > limit).unwrap_or(false) {
-                match event {
-                    Event::Key(Key::Space, ButtonState::Pressed) => {
-                        if self.client.done {
-                            self.return_to_menu = true;
-                        }
-                    },
-
-                    _ => (),
-                }
+                self.buttons.set_menu(1);
+                self.buttons.event(*event, window);
             }
         }
 
@@ -289,6 +292,9 @@ impl<R: Remote + 'static> Scene for Game<R> {
                        Col(Color::BLACK),
                        Transform::translate(Vector::new(480.0, 360.0)) * Transform::rotate(-30.0),
                        -2);
+
+        // draw buttons
+        self.buttons.draw(window);
 
         // render a background for the main game
         let bg = Rectangle::new(Vector::new(230.0, 0.0), Vector::new(180.0, 360.0));

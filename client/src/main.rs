@@ -4,6 +4,7 @@ mod matchmaking;
 mod util;
 mod connection;
 mod controls;
+mod buttons;
 
 use quicksilver::{
     Result,

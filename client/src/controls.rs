@@ -148,9 +148,9 @@ impl ControlMap {
                     state.pressed = window.gamepads()
                         .first()
                         .map(|gamepad| {
-                            if gamepad[axis] > 0.01 {
+                            if gamepad[axis] > 0.5 {
                                 positive
-                            } else if gamepad[axis] < -0.01 {
+                            } else if gamepad[axis] < -0.5 {
                                 !positive
                             } else {
                                 false
@@ -196,9 +196,9 @@ impl ControlMap {
     pub fn event_to_binding(event: Event) -> Option<Binding> {
         match event {
             Event::Key(key, _) => Some(Binding::KeyboardKey(key as u32)),
-            Event::GamepadAxis(_, axis, amount) => if amount > 0.1 {
+            Event::GamepadAxis(_, axis, amount) => if amount > 0.5 {
                 Some(Binding::GamepadAxis(axis as u32, true))
-            } else if amount < -0.1 {
+            } else if amount < -0.5 {
                 Some(Binding::GamepadAxis(axis as u32, false))
             } else {
                 None

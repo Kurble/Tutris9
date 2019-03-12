@@ -85,3 +85,7 @@ pub fn draw_pattern(timer: f32, pattern: &Image, view: Rectangle, window: &mut W
         y += size;
     }
 }
+
+pub fn rect(x: f32, y: f32, w: f32, h: f32) -> Rectangle {
+    Rectangle::new(Vector::new(x, y), Vector::new(w, h))
+}
