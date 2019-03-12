@@ -84,8 +84,8 @@ impl<R: Remote + 'static> Game<R> {
                 let position_header = font.render("Place: ", &position_style).unwrap();
                 let message = font.render("Get Ready!", &result_style).unwrap();
                 let mut buttons = Buttons::new();
-                buttons.push(Button::new(vec![util::rect(40.0, 300.0, 160.0, 40.0)],
-                                         vec![util::rect(20.0, 280.0, 240.0, 60.0)],
+                buttons.push(Button::new(vec![util::rect(40.0, 280.0, 150.0, 40.0)],
+                                         vec![util::rect(20.0, 280.0, 190.0, 60.0)],
                                          Color { r: 0.1, g: 0.1, b:  0.8, a: 1.0 }, 1,
                                          font.render("Return", &position_style).ok()));
 
@@ -203,36 +203,39 @@ impl<R: Remote + 'static> Scene for Game<R> {
         self.controls.update(window);
         self.buttons.update(window);
 
-        if self.controls[BindPoint::Left] {
-            self.state = self.client.games[self.player_id].slide_left(self.state);
-        }
-        if self.controls[BindPoint::Right] {
-            self.state = self.client.games[self.player_id].slide_right(self.state);
-        }
-        if self.controls[BindPoint::SoftDrop] {
-            self.state = self.client.games[self.player_id].slide_down(self.state);
-        }
-        if self.controls[BindPoint::HardDrop] {
-            self.state = self.client.games[self.player_id].hard_drop(self.state);
-            self.drop();
-        }
-        if self.controls[BindPoint::RotateCCW] {
-            self.state = self.client.games[self.player_id].rotate_left(self.state);
-        }
-        if self.controls[BindPoint::RotateCW] {
-            self.state = self.client.games[self.player_id].rotate_right(self.state);
-        }
-        if self.controls[BindPoint::Hold] {
-            if !self.client.games[self.player_id].held {
-                self.client.games[self.player_id].held = true;
-                self.state = ActiveState::new();
-                self.client
-                    .command(format!("call:hold:\"{}\"", self.player_key).as_str())
-                    .unwrap();
+        if self.client.in_game(self.player_id) {
+            if self.controls[BindPoint::Left] {
+                self.state = self.client.games[self.player_id].slide_left(self.state);
             }
-        }
-        if self.buttons[0].clicked() {
-            self.return_to_menu = true;
+            if self.controls[BindPoint::Right] {
+                self.state = self.client.games[self.player_id].slide_right(self.state);
+            }
+            if self.controls[BindPoint::SoftDrop] {
+                self.state = self.client.games[self.player_id].slide_down(self.state);
+            }
+            if self.controls[BindPoint::HardDrop] {
+                self.state = self.client.games[self.player_id].hard_drop(self.state);
+                self.drop();
+            }
+            if self.controls[BindPoint::RotateCCW] {
+                self.state = self.client.games[self.player_id].rotate_left(self.state);
+            }
+            if self.controls[BindPoint::RotateCW] {
+                self.state = self.client.games[self.player_id].rotate_right(self.state);
+            }
+            if self.controls[BindPoint::Hold] {
+                if !self.client.games[self.player_id].held {
+                    self.client.games[self.player_id].held = true;
+                    self.state = ActiveState::new();
+                    self.client
+                        .command(format!("call:hold:\"{}\"", self.player_key).as_str())
+                        .unwrap();
+                }
+            }
+        } else {
+            if self.buttons[0].clicked() {
+                self.return_to_menu = true;
+            }
         }
 
         add_seconds(&mut self.last_line_drop, window.update_rate() / 1000.0);
@@ -250,9 +253,14 @@ impl<R: Remote + 'static> Scene for Game<R> {
             }
         } else {
             self.last_line_drop = Duration::from_secs(0);
-            if self.client.done && self.game_over_duration.is_none() {
+            if self.client.started && self.game_over_duration.is_none() {
                 self.game_over_duration = Some(Duration::from_secs(0));
                 self.message = self.font.render("Game Over!", &self.result_style).unwrap();
+            }
+
+            let limit = Duration::from_secs(3);
+            if self.game_over_duration.as_ref().map(|&t| t > limit).unwrap_or(false) {
+                self.buttons.set_menu(1);
             }
         }
 
@@ -260,14 +268,8 @@ impl<R: Remote + 'static> Scene for Game<R> {
     }
 
     fn event(&mut self, event: &Event, window: &mut Window) -> Result<()> {
-        if self.client.in_game(self.player_id) {
-            // todo
-        } else {
-            let limit = Duration::from_secs(3);
-            if self.game_over_duration.as_ref().map(|&t| t > limit).unwrap_or(false) {
-                self.buttons.set_menu(1);
-                self.buttons.event(*event, window);
-            }
+        if !self.client.in_game(self.player_id) {
+            self.buttons.event(*event, window);
         }
 
         Ok(())

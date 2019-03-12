@@ -8,8 +8,8 @@ mod buttons;
 
 use quicksilver::{
     Result,
-    geom::Vector,
-    graphics::Color,
+    geom::{Transform, Vector},
+    graphics::{Color, Background::Col},
     lifecycle::{Settings, State, Window, Event, run},
     combinators::Future,
 };
@@ -26,7 +26,9 @@ pub trait Scene {
 enum DrawScene {
     None,
     NotFullscreen(Box<Future<Item=Box<Scene>, Error=quicksilver::Error>>),
+    FadeOut(Box<Scene>, f32, Box<Future<Item=Box<Scene>, Error=quicksilver::Error>>),
     Loading(Box<Future<Item=Box<Scene>, Error=quicksilver::Error>>),
+    FadeIn(Box<Scene>, f32),
     Loaded(Box<Scene>),
 }
 
@@ -50,11 +52,38 @@ impl State for DrawScene {
                 }
             },
 
+            DrawScene::FadeOut(scene, progress, next) => {
+                let progress = progress + window.update_rate() as f32 / 500.0;
+                if progress > 1.0 {
+                    DrawScene::Loading(next)
+                } else {
+                    DrawScene::FadeOut(scene, progress, next)
+                }
+            },
+
             DrawScene::Loading(mut future) => {
                 if let Ok(Async::Ready(scene)) = future.poll() {
-                    DrawScene::Loaded(scene)
+                    DrawScene::FadeIn(scene, 0.0)
                 } else {
                     DrawScene::Loading(future)
+                }
+            },
+
+            DrawScene::Loaded(mut scene) => {
+                scene.update(window)?;
+                if let Some(next) = scene.advance() {
+                    DrawScene::FadeOut(scene, 0.0, next)
+                } else {
+                    DrawScene::Loaded(scene)
+                }
+            },
+
+            DrawScene::FadeIn(scene, progress) => {
+                let progress = progress + window.update_rate() as f32 / 500.0;
+                if progress > 1.0 {
+                    DrawScene::Loaded(scene)
+                } else {
+                    DrawScene::FadeIn(scene, progress)
                 }
             },
 
@@ -62,17 +91,6 @@ impl State for DrawScene {
         };
 
         replace(self, next);
-
-        let next = if let &mut DrawScene::Loaded(ref mut scene) = self {
-            scene.update(window)?;
-            scene.advance()
-        } else {
-            None
-        };
-
-        if let Some(next) = next {
-            replace(self, DrawScene::Loading(next));
-        }
 
         Ok(())
     }
@@ -85,10 +103,25 @@ impl State for DrawScene {
     }
 
     fn draw(&mut self, window: &mut Window) -> Result<()> {
-        if let &mut DrawScene::Loaded(ref mut scene) = self {
-            scene.draw(window)?;
-        } else {
-            window.clear(Color::BLACK)?;
+        match self {
+            &mut DrawScene::FadeOut(ref mut scene, progress, _) => {
+                scene.draw(window)?;
+                let color = Color { a: progress, ..Color::BLACK };
+                let trans = Transform::IDENTITY;
+                window.draw_ex(&util::rect(0.0, 0.0, 640.0, 360.0), Col(color), trans, 100);
+            },
+            &mut DrawScene::Loaded(ref mut scene) => {
+                scene.draw(window)?;
+            },
+            &mut DrawScene::FadeIn(ref mut scene, progress) => {
+                scene.draw(window)?;
+                let color = Color { a: 1.0 - progress, ..Color::BLACK };
+                let trans = Transform::IDENTITY;
+                window.draw_ex(&util::rect(0.0, 0.0, 640.0, 360.0), Col(color), trans, 100);
+            },
+            &mut _ => {
+                window.clear(Color::BLACK)?;
+            },
         }
         Ok(())
     }

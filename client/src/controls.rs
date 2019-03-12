@@ -70,14 +70,14 @@ impl Display for Binding {
                     std::mem::transmute::<u8, GamepadAxis>(axis as u8)
                 };
                 match (axis, positive) {
-                    (GamepadAxis::LeftStickX, false) => write!(f, "L. Analog <-"),
-                    (GamepadAxis::LeftStickX, true) => write!(f, "L. Analog ->"),
-                    (GamepadAxis::LeftStickY, false) => write!(f, "L. Analog ^"),
-                    (GamepadAxis::LeftStickY, true) => write!(f, "L. Analog V"),
-                    (GamepadAxis::RightStickX, false) => write!(f, "R. Analog <-"),
-                    (GamepadAxis::RightStickX, true) => write!(f, "R. Analog ->"),
-                    (GamepadAxis::RightStickY, false) => write!(f, "R. Analog ^"),
-                    (GamepadAxis::RightStickY, true) => write!(f, "R. Analog V"),
+                    (GamepadAxis::LeftStickX, false) => write!(f, "L. Analog ←"),
+                    (GamepadAxis::LeftStickX, true) => write!(f, "L. Analog →"),
+                    (GamepadAxis::LeftStickY, false) => write!(f, "L. Analog ↑"),
+                    (GamepadAxis::LeftStickY, true) => write!(f, "L. Analog ↓"),
+                    (GamepadAxis::RightStickX, false) => write!(f, "R. Analog ←"),
+                    (GamepadAxis::RightStickX, true) => write!(f, "R. Analog →"),
+                    (GamepadAxis::RightStickY, false) => write!(f, "R. Analog ↑"),
+                    (GamepadAxis::RightStickY, true) => write!(f, "R. Analog ↓"),
                 }
             },
             &Binding::GamepadKey(key) => {
