@@ -2,7 +2,8 @@ use crate::instance::InstanceContainer;
 use crate::game::run_game_server;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Receiver;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use std::thread::sleep;
 use rand::random;
 use mirror::*;
 
@@ -112,5 +113,7 @@ pub fn run_matchmaking_server<R>(listener: Receiver<R>,
                 }
             }
         }
+
+        sleep(Duration::from_millis(500));
     }
 }

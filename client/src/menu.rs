@@ -2,6 +2,7 @@ use super::*;
 use crate::connection::make_connection;
 use crate::matchmaking::*;
 use crate::controls::*;
+use crate::persistent::*;
 use crate::buttons::*;
 
 use std::collections::HashMap;
@@ -21,7 +22,7 @@ pub struct Menu {
     buttons: Buttons,
     pattern: Image,
     pattern_timer: f32,
-    controls: ControlMap,
+    data: Persistent,
     control_buttons: HashMap<BindPoint, usize>,
     await_remap: Option<BindPoint>,
     matchmaking: Option<Box<Matchmaking>>,
@@ -37,7 +38,8 @@ impl Menu {
         Box::new(font.join(pattern.join(logo)).map(|(font, (pattern, logo))| {
             let button_style = FontStyle::new(48.0, Color::WHITE);
 
-            let controls = load("tutris9", "_controls").unwrap_or(ControlMap::default());
+            let data = load("tutris9", "data").unwrap_or(Persistent::default());
+            println!("{:?}", data.statistics);
 
             let mut buttons = Buttons::new();
             buttons.push(Button::new(
@@ -119,7 +121,7 @@ impl Menu {
                 BindPoint::RotateCCW, BindPoint::SoftDrop, BindPoint::HardDrop,
                 BindPoint::Hold].iter() {
                 let y = 130.0 + control_buttons.len() as f32 * 30.0;
-                let text = format!("{}: {}", bp, controls.binding(bp));
+                let text = format!("{}: {}", bp, data.controls.binding(bp));
 
                 control_buttons.insert(*bp, buttons.push(Button::new(
                     vec![
@@ -138,7 +140,7 @@ impl Menu {
                 buttons,
                 pattern,
                 pattern_timer: 0.0,
-                controls,
+                data,
                 control_buttons,
                 await_remap: None,
                 matchmaking: None,
@@ -150,7 +152,7 @@ impl Menu {
 
 impl Drop for Menu {
     fn drop(&mut self) {
-        save("tutris9", "_controls", &self.controls).ok();
+        save("tutris9", "data", &self.data).ok();
     }
 }
 
@@ -185,7 +187,7 @@ impl Scene for Menu {
 
             let address = format!("{}//{}/instance/0", util::get_protocol(), util::get_host());
             let client = mirror::Client::new(make_connection(address.as_str()));
-            self.matchmaking = Some(Box::new(MatchmakingImpl::new(client, self.controls.clone())));
+            self.matchmaking = Some(Box::new(MatchmakingImpl::new(client, self.data.clone())));
         }
 
         // process the matchmaking cancel button
@@ -218,7 +220,7 @@ impl Scene for Menu {
     fn event(&mut self, event: &Event, window: &mut Window) -> Result<()> {
         if let Some(point) = self.await_remap {
             if let Some(binding) = ControlMap::event_to_binding(event.clone()) {
-                self.controls.remap(point, binding);
+                self.data.controls.remap(point, binding);
 
                 let button_style = FontStyle::new(48.0, Color::WHITE);
                 let text = format!("{}: {}", point, binding);

@@ -5,6 +5,7 @@ mod util;
 mod connection;
 mod controls;
 mod buttons;
+mod persistent;
 
 use quicksilver::{
     Result,
@@ -129,7 +130,7 @@ impl State for DrawScene {
 
 fn main() {
     run::<DrawScene>("Tutris 9",
-                     Vector::new(1280, 720),
+                     Vector::new(640, 360),
                      Settings {
                          draw_rate: 16.6666667,
                          update_rate: 16.6666667,

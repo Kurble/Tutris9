@@ -52,6 +52,9 @@ pub struct PlayerState {
     pub moves: usize,
     pub combo: usize,
     pub garbage: Vec<(u8, u8)>,
+    pub lines_cleared: usize,
+    pub garbage_sent: usize,
+    pub garbage_received: usize,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
@@ -205,6 +208,8 @@ impl InstanceState {
                     context.command(self, format!("games/{}/call:compact:", id)).unwrap();
                     context.command(self, format!("games/{}/combo/set:{}", id,
                                                   self.games[id].combo + 1)).unwrap();
+                    context.command(self, format!("games/{}/lines_cleared/set:{}", id,
+                                                  self.games[id].lines_cleared + lines)).unwrap();
 
                     let garbage = match lines {
                         2 => 1,
@@ -221,9 +226,18 @@ impl InstanceState {
                                     .command(self, format!("games/{}/garbage/remove:0", id))
                                     .unwrap();
                             } else {
+                                let tgt = self.games[id].target;
                                 context
-                                    .command(self, format!("games/{}/garbage/push:[{},3]",
-                                                           self.games[id].target, column))
+                                    .command(self, format!("games/{}/garbage_sent/set:{}", id,
+                                                           self.games[id].garbage_sent + 1))
+                                    .unwrap();
+                                context
+                                    .command(self, format!("games/{}/garbage_received/set:{}", tgt,
+                                                           self.games[tgt].garbage_received + 1))
+                                    .unwrap();
+                                context
+                                    .command(self, format!("games/{}/garbage/push:[{},3]", tgt,
+                                                           column))
                                     .unwrap();
                             }
                         }
@@ -333,6 +347,10 @@ impl PlayerState {
             moves: 0,
             combo: 0,
             garbage: Vec::new(),
+
+            lines_cleared: 0,
+            garbage_sent: 0,
+            garbage_received: 0,
         }
     }
 

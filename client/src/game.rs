@@ -1,5 +1,6 @@
 use super::*;
 use crate::util::*;
+use crate::persistent::*;
 use crate::controls::*;
 use crate::buttons::*;
 use mirror::{Remote, Client};
@@ -14,13 +15,14 @@ use quicksilver::{
     geom::{Rectangle, Transform, Vector},
     graphics::{Background, Background::Img, Background::Col, Background::Blended, Color, Image, View, Font, FontStyle},
     lifecycle::{Window},
+    saving::save,
 };
 
 pub struct Game<R: Remote> {
     client: Client<InstanceState, R>,
     player_id: usize,
     player_key: String,
-    controls: ControlMap,
+    data: Persistent,
     buttons: Buttons,
 
     state: ActiveState,
@@ -52,7 +54,7 @@ pub struct Game<R: Remote> {
 }
 
 impl<R: Remote + 'static> Game<R> {
-    pub fn new<F>(client: F, player_id: usize, player_key: String, controls: ControlMap)
+    pub fn new<F>(client: F, player_id: usize, player_key: String, data: Persistent)
         -> Box<Future<Item=Box<Scene>, Error=quicksilver::Error>>
         where
             F: 'static + Future<Item=Client<InstanceState, R>, Error=mirror::Error>
@@ -93,7 +95,7 @@ impl<R: Remote + 'static> Game<R> {
                     client,
                     player_id,
                     player_key,
-                    controls,
+                    data,
                     buttons,
 
                     state: ActiveState {
@@ -126,7 +128,7 @@ impl<R: Remote + 'static> Game<R> {
             }))
     }
 
-    fn drop(&mut self) {
+    fn drop_current(&mut self) {
         // send drop command
         self.client.command(format!("call:drop:\"{}\" {}",
                                     self.player_key,
@@ -145,6 +147,19 @@ impl<R: Remote + 'static> Game<R> {
                     }
                 }
             }
+        }
+
+        // update statistics
+        self.data.statistics.bricks += 1;
+        match self.client.games[self.player_id].current {
+            0 => self.data.statistics.i_blocks += 1,
+            1 => self.data.statistics.o_blocks += 1,
+            2 => self.data.statistics.t_blocks += 1,
+            3 => self.data.statistics.j_blocks += 1,
+            4 => self.data.statistics.l_blocks += 1,
+            5 => self.data.statistics.s_blocks += 1,
+            6 => self.data.statistics.z_blocks += 1,
+            _ => (),
         }
 
         // update the current tetrimino in advance
@@ -197,45 +212,73 @@ impl<R: Remote + 'static> Game<R> {
     }
 }
 
+impl<R: Remote> Drop for Game<R> {
+    fn drop(&mut self) {
+        // append the server side session statistics
+        self.data.statistics.lines_cleared += self.client.games[self.player_id].lines_cleared;
+        self.data.statistics.garbage_sent += self.client.games[self.player_id].garbage_sent;
+        self.data.statistics.garbage_received += self.client.games[self.player_id].garbage_received;
+
+        // update statics that relate a number of games
+        if self.client.games[self.player_id].ko || self.client.done {
+            match self.client.games_ko.iter()
+                .enumerate()
+                .find(|(_, e)| **e == self.player_id)
+                .map(|(i, _)| self.client.games.len() - i)
+                .unwrap_or(1) {
+                1 => self.data.statistics.firsts += 1,
+                2 => self.data.statistics.seconds += 1,
+                3 => self.data.statistics.thirds += 1,
+                _ => (),
+            }
+            self.data.statistics.games_played += 1;
+        }
+
+        save("tutris9", "data", &self.data).ok();
+    }
+}
+
 impl<R: Remote + 'static> Scene for Game<R> {
     fn update(&mut self, window: &mut Window) -> Result<()> {
         self.client.update();
-        self.controls.update(window);
+        self.data.controls.update(window);
         self.buttons.update(window);
 
         if self.client.in_game(self.player_id) {
-            if self.controls[BindPoint::Left] {
+            if self.data.controls[BindPoint::Left] {
                 self.state = self.client.games[self.player_id].slide_left(self.state);
             }
-            if self.controls[BindPoint::Right] {
+            if self.data.controls[BindPoint::Right] {
                 self.state = self.client.games[self.player_id].slide_right(self.state);
             }
-            if self.controls[BindPoint::SoftDrop] {
+            if self.data.controls[BindPoint::SoftDrop] {
                 self.state = self.client.games[self.player_id].slide_down(self.state);
             }
-            if self.controls[BindPoint::HardDrop] {
+            if self.data.controls[BindPoint::HardDrop] {
                 self.state = self.client.games[self.player_id].hard_drop(self.state);
-                self.drop();
+                self.data.statistics.hard_drops += 1;
+                self.drop_current();
             }
-            if self.controls[BindPoint::RotateCCW] {
+            if self.data.controls[BindPoint::RotateCCW] {
                 self.state = self.client.games[self.player_id].rotate_left(self.state);
+                self.data.statistics.rotations += 1;
             }
-            if self.controls[BindPoint::RotateCW] {
+            if self.data.controls[BindPoint::RotateCW] {
                 self.state = self.client.games[self.player_id].rotate_right(self.state);
+                self.data.statistics.rotations += 1;
             }
-            if self.controls[BindPoint::Hold] {
+            if self.data.controls[BindPoint::Hold] {
                 if !self.client.games[self.player_id].held {
                     self.client.games[self.player_id].held = true;
+                    self.data.statistics.holds += 1;
                     self.state = ActiveState::new();
                     self.client
                         .command(format!("call:hold:\"{}\"", self.player_key).as_str())
                         .unwrap();
                 }
             }
-        } else {
-            if self.buttons[0].clicked() {
-                self.return_to_menu = true;
-            }
+        } else if self.buttons[0].clicked() {
+            self.return_to_menu = true;
         }
 
         add_seconds(&mut self.last_line_drop, window.update_rate() / 1000.0);
@@ -248,7 +291,7 @@ impl<R: Remote + 'static> Scene for Game<R> {
                 self.state = self.client.games[self.player_id].slide_down(self.state);
 
                 if before.y == self.state.y {
-                    self.drop();
+                    self.drop_current();
                 }
             }
         } else {

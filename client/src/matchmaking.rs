@@ -1,7 +1,7 @@
 use super::*;
 use crate::game::Game;
 use crate::connection::make_connection;
-use crate::controls::*;
+use crate::persistent::*;
 use mirror::{Remote, Client};
 use tetris_model::matchmaking::MatchmakingState;
 use quicksilver::Future;
@@ -17,9 +17,9 @@ pub trait Matchmaking {
 }
 
 pub enum MatchmakingImpl<R: Remote> {
-    Connecting(ControlMap, Box<Future<Item=Client<MatchmakingState, R>, Error=mirror::Error>>),
+    Connecting(Persistent, Box<Future<Item=Client<MatchmakingState, R>, Error=mirror::Error>>),
 
-    Waiting(ControlMap, Client<MatchmakingState, R>),
+    Waiting(Persistent, Client<MatchmakingState, R>),
 
     Ok(Box<Future<Item=Box<Scene>, Error=quicksilver::Error>>),
 
@@ -29,24 +29,24 @@ pub enum MatchmakingImpl<R: Remote> {
 }
 
 impl<R: Remote + 'static> MatchmakingImpl<R> {
-    pub fn new<F>(client: F, controls: ControlMap) -> Self where
+    pub fn new<F>(client: F, data: Persistent) -> Self where
         F: 'static + Future<Item=Client<MatchmakingState, R>, Error=mirror::Error>
     {
-        MatchmakingImpl::Connecting(controls, Box::new(client))
+        MatchmakingImpl::Connecting(data, Box::new(client))
     }
 }
 
 impl<R: Remote + 'static> Matchmaking for MatchmakingImpl<R> {
     fn update(&mut self) {
         let next = match replace(self, MatchmakingImpl::Poisoned) {
-            MatchmakingImpl::Connecting(controls, mut future) => {
+            MatchmakingImpl::Connecting(data, mut future) => {
                 match future.poll() {
-                    Ok(Async::NotReady) => MatchmakingImpl::Connecting(controls, future),
-                    Ok(Async::Ready(o)) => MatchmakingImpl::Waiting(controls, o),
+                    Ok(Async::NotReady) => MatchmakingImpl::Connecting(data, future),
+                    Ok(Async::Ready(o)) => MatchmakingImpl::Waiting(data, o),
                     Err(e) => MatchmakingImpl::Error(e),
                 }
             },
-            MatchmakingImpl::Waiting(controls, mut client) => {
+            MatchmakingImpl::Waiting(data, mut client) => {
                 client.update();
                 if client.done {
                     let address = format!("{}//{}/instance/{}", util::get_protocol(), util::get_host(),
@@ -56,11 +56,11 @@ impl<R: Remote + 'static> Matchmaking for MatchmakingImpl<R> {
                     MatchmakingImpl::Ok(Game::new(game_client,
                                                   client.player_id,
                                                   client.player_key.clone(),
-                                                  controls))
+                                                  data))
                 } else if !client.alive() {
                     MatchmakingImpl::Error(mirror::Error::ConnectionDropped)
                 } else {
-                    MatchmakingImpl::Waiting(controls, client)
+                    MatchmakingImpl::Waiting(data, client)
                 }
             },
             other => other,
