@@ -92,38 +92,11 @@ impl<R: Remote + 'static> Game<R> {
                                          font.render("Return", &position_style).ok()));
 
                 Box::new(Self {
-                    client,
-                    player_id,
-                    player_key,
-                    data,
-                    buttons,
-
-                    state: ActiveState {
-                        x: 2,
-                        y: -4,
-                        rotation: 0,
-                    },
-                    last_line_drop: Duration::from_secs(0),
-                    return_to_menu: false,
-                    game_over_duration: None,
-                    font,
-                    position_style,
-                    result_style,
-                    position: None,
-                    position_header,
-                    result: None,
-                    message,
-                    own_blocks,
-                    other_blocks,
-                    own_bg,
-                    other_bg,
-                    ko,
-                    bomb,
-                    bomb_small,
-                    pattern,
-
-                    pattern_timer: 0.0,
-                    mapping,
+                    client, player_id, player_key, data, buttons, state: ActiveState::new(),
+                    last_line_drop: Duration::from_secs(0), return_to_menu: false,
+                    game_over_duration: None, font, position_style, result_style, position: None,
+                    position_header, result: None, message, own_blocks, other_blocks, own_bg,
+                    other_bg, ko, bomb, bomb_small, pattern, pattern_timer: 0.0, mapping,
                 }) as Box<Scene>
             }))
     }

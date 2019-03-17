@@ -134,9 +134,9 @@ impl Buttons {
 
             if button.enabled >= 0.1 {
                 let text_size = button.text.as_ref().unwrap().area().size;
-                text_pos.x -= text_size.x * 0.5;
-                text_pos.y -= text_size.y * 0.5;
-                window.draw_ex(&Rectangle::new(text_pos, text_size), Img(button.text.as_ref().unwrap()),
+                text_pos.x -= text_size.x * 0.25;
+                text_pos.y -= text_size.y * 0.25;
+                window.draw_ex(&Rectangle::new(text_pos, text_size * 0.5), Img(button.text.as_ref().unwrap()),
                                Transform::IDENTITY, 0);
             }
         }

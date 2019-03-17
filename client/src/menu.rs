@@ -4,6 +4,7 @@ use crate::matchmaking::*;
 use crate::controls::*;
 use crate::persistent::*;
 use crate::buttons::*;
+use crate::stats::*;
 
 use std::collections::HashMap;
 
@@ -133,6 +134,26 @@ impl Menu {
                     Color { r: 0.1, g: 0.1, b: 0.1, a: 1.0 }, 3,
                     Some(font.render(text.as_str(), &button_style).unwrap()))));
             }
+
+            let mut i = 0;
+            StatsPopulator::populate(&data.statistics, |value| {
+                let value: String = value
+                    .split('_')
+                    .flat_map(|word: &str| word.chars()
+                        .enumerate()
+                        .map(|(i, c)| if i == 0 { c.to_ascii_uppercase() } else { c })
+                        .chain(std::iter::repeat(' ').take(1)))
+                    .collect();
+                let x = i / 7;
+                let y = i % 7;
+                buttons.push(Button::new(
+                    vec![util::rect(180.0 + 210.0*x as f32, 130.0 + 30.0*y as f32, 200.0, 25.0)],
+                    vec![util::rect(180.0 + 210.0*x as f32, 130.0 + 30.0*y as f32, 200.0, 25.0)],
+                    Color { r: 0.1, g: 0.1, b: 0.8, a: 1.0 }, 2,
+                    Some(font.render(value.as_str(), &button_style).unwrap())));
+
+                i += 1;
+            }).unwrap();
 
             Box::new(Self {
                 font,

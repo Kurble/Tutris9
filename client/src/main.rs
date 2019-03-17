@@ -6,6 +6,7 @@ mod connection;
 mod controls;
 mod buttons;
 mod persistent;
+mod stats;
 
 use quicksilver::{
     Result,
