@@ -1,0 +1,15 @@
+# OS things
+.DS_Store
+Thumbs.db
+
+# Rust specific
+/target
+/**/*.rs.bk
+
+# IntelliJ specific
+/.idea/
+/*.iml
+
+# Project specific
+/deploy
+/static/tetris_client.*
